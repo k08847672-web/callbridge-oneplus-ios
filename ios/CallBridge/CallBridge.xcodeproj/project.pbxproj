@@ -1,0 +1,272 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A00000000000000000000009 /* SystemCallController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000009 /* SystemCallController.swift */; };
+		A00000000000000000000001 /* CallBridgeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000001 /* CallBridgeApp.swift */; };
+		A00000000000000000000002 /* BridgeModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000002 /* BridgeModel.swift */; };
+		A00000000000000000000003 /* BridgeClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000003 /* BridgeClient.swift */; };
+		A00000000000000000000004 /* CallAudio.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000004 /* CallAudio.swift */; };
+		A00000000000000000000005 /* FrameProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000005 /* FrameProtocol.swift */; };
+		A00000000000000000000008 /* MicrophonePCM.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000008 /* MicrophonePCM.swift */; };
+		A00000000000000000000010 /* IncomingCallCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000010 /* IncomingCallCoordinator.swift */; };
+		A00000000000000000000011 /* PairingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000011 /* PairingStore.swift */; };
+		A00000000000000000000012 /* VoIPPushController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000012 /* VoIPPushController.swift */; };
+		A00000000000000000000013 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000013 /* Assets.xcassets */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		B00000000000000000000009 /* SystemCallController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemCallController.swift; sourceTree = "<group>"; };
+		B00000000000000000000001 /* CallBridgeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallBridgeApp.swift; sourceTree = "<group>"; };
+		B00000000000000000000002 /* BridgeModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BridgeModel.swift; sourceTree = "<group>"; };
+		B00000000000000000000003 /* BridgeClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BridgeClient.swift; sourceTree = "<group>"; };
+		B00000000000000000000004 /* CallAudio.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallAudio.swift; sourceTree = "<group>"; };
+		B00000000000000000000005 /* FrameProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrameProtocol.swift; sourceTree = "<group>"; };
+		B00000000000000000000006 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		B00000000000000000000007 /* CallBridge.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CallBridge.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B00000000000000000000008 /* MicrophonePCM.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicrophonePCM.swift; sourceTree = "<group>"; };
+		B00000000000000000000010 /* IncomingCallCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IncomingCallCoordinator.swift; sourceTree = "<group>"; };
+		B00000000000000000000011 /* PairingStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingStore.swift; sourceTree = "<group>"; };
+		B00000000000000000000012 /* VoIPPushController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoIPPushController.swift; sourceTree = "<group>"; };
+		B00000000000000000000013 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		B00000000000000000000014 /* CallBridge.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = CallBridge.entitlements; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		D00000000000000000000002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		C00000000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				C00000000000000000000002 /* CallBridge */,
+				C00000000000000000000003 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		C00000000000000000000002 /* CallBridge */ = {
+			isa = PBXGroup;
+			children = (
+				B00000000000000000000001 /* CallBridgeApp.swift */,
+				B00000000000000000000002 /* BridgeModel.swift */,
+				B00000000000000000000003 /* BridgeClient.swift */,
+				B00000000000000000000004 /* CallAudio.swift */,
+				B00000000000000000000009 /* SystemCallController.swift */,
+				B00000000000000000000005 /* FrameProtocol.swift */,
+				B00000000000000000000008 /* MicrophonePCM.swift */,
+				B00000000000000000000006 /* Info.plist */,
+				B00000000000000000000010 /* IncomingCallCoordinator.swift */,
+				B00000000000000000000011 /* PairingStore.swift */,
+				B00000000000000000000012 /* VoIPPushController.swift */,
+				B00000000000000000000013 /* Assets.xcassets */,
+				B00000000000000000000014 /* CallBridge.entitlements */,
+			);
+			path = CallBridge;
+			sourceTree = "<group>";
+		};
+		C00000000000000000000003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				B00000000000000000000007 /* CallBridge.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		E00000000000000000000001 /* CallBridge */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F00000000000000000000002 /* Build configuration list for PBXNativeTarget "CallBridge" */;
+			buildPhases = (
+				D00000000000000000000001 /* Sources */,
+				D00000000000000000000002 /* Frameworks */,
+				D00000000000000000000003 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = CallBridge;
+			productName = CallBridge;
+			productReference = B00000000000000000000007 /* CallBridge.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		E00000000000000000000002 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastSwiftUpdateCheck = 2600;
+				LastUpgradeCheck = 2600;
+				TargetAttributes = {
+					E00000000000000000000001 = {
+						CreatedOnToolsVersion = 26.6;
+						ProvisioningStyle = Automatic;
+						SystemCapabilities = { com.apple.Push = { enabled = 1; }; com.apple.BackgroundModes = { enabled = 1; }; };
+					};
+				};
+			};
+			buildConfigurationList = F00000000000000000000001 /* Build configuration list for PBXProject "CallBridge" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = zh_CN;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				zh_CN,
+				en,
+				Base,
+			);
+			mainGroup = C00000000000000000000001;
+			productRefGroup = C00000000000000000000003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				E00000000000000000000001 /* CallBridge */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		D00000000000000000000003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A00000000000000000000013 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		D00000000000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A00000000000000000000001 /* CallBridgeApp.swift in Sources */,
+				A00000000000000000000002 /* BridgeModel.swift in Sources */,
+				A00000000000000000000003 /* BridgeClient.swift in Sources */,
+				A00000000000000000000004 /* CallAudio.swift in Sources */,
+				A00000000000000000000009 /* SystemCallController.swift in Sources */,
+				A00000000000000000000005 /* FrameProtocol.swift in Sources */,
+				A00000000000000000000008 /* MicrophonePCM.swift in Sources */,
+				A00000000000000000000010 /* IncomingCallCoordinator.swift in Sources */,
+				A00000000000000000000011 /* PairingStore.swift in Sources */,
+				A00000000000000000000012 /* VoIPPushController.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		F00000000000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		F00000000000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				SDKROOT = iphoneos;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		F00000000000000000000005 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CALLBRIDGE_APNS_ENVIRONMENT = sandbox;
+				CALLBRIDGE_APS_ENTITLEMENT = development;
+				CODE_SIGN_STYLE = Automatic;
+				CODE_SIGN_ENTITLEMENTS = CallBridge/CallBridge.entitlements;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = CallBridge/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.callbridge;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		F00000000000000000000006 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CALLBRIDGE_APNS_ENVIRONMENT = production;
+				CALLBRIDGE_APS_ENTITLEMENT = production;
+				CODE_SIGN_STYLE = Automatic;
+				CODE_SIGN_ENTITLEMENTS = CallBridge/CallBridge.entitlements;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = CallBridge/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.callbridge;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		F00000000000000000000001 /* Build configuration list for PBXProject "CallBridge" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F00000000000000000000003 /* Debug */,
+				F00000000000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		F00000000000000000000002 /* Build configuration list for PBXNativeTarget "CallBridge" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F00000000000000000000005 /* Debug */,
+				F00000000000000000000006 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = E00000000000000000000002 /* Project object */;
+}

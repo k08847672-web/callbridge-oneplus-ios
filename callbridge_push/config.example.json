@@ -1,0 +1,18 @@
+{
+  "listen": "127.0.0.1",
+  "port": 47632,
+  "mode": "mock",
+  "state_file": "/path/to/private-callbridge/provider-state.json",
+  "pairs": [
+    {
+      "pairing_id": "00000000-0000-4000-8000-000000000001",
+      "provider_token_hash": "REPLACE_WITH_SHA256_HEX_OF_YOUR_PRIVATE_PROVIDER_TOKEN"
+    }
+  ],
+  "apns": {
+    "team_id": "YOUR_APPLE_TEAM_ID",
+    "key_id": "YOUR_APNS_KEY_ID",
+    "topic": "your.unique.bundle.id.voip",
+    "private_key_path": "/path/to/private-callbridge/AuthKey.p8"
+  }
+}
