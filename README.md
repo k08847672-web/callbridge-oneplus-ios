@@ -15,6 +15,8 @@
 
 仅完成 iOS 签名和上传需要 Mac、Xcode 与朋友的 Apple 团队，不需要先安装 Android 构建工具。细节见 [签名与分发](docs/FRIEND_SIGNING_TESTFLIGHT.md)。实际使用转接时，再按下面的独立说明准备 Android、provider 和配对。
 
+已经通过 TestFlight 安装后，可将 [朋友 Codex 的 APNs 核对与交付说明](docs/FRIEND_APNS_CODEX.md) 交给签名方：先核对当前构建及已有 Apple 资源，只补实际缺项；本次 provider 由使用者一侧部署在 Mini，朋友无需部署服务器。
+
 ## 目录与环境
 
 | 路径 | 内容 |
