@@ -16,6 +16,8 @@
 2. 在朋友本机、既有构建记录或 CI 产物中，定位该构建对应的 `.xcarchive`、上传时导出的 `.ipa` 或已签名 `.app`，并核对源码 commit。不要用刚 clone 的仓库 HEAD 冒充已上传构建的 commit；无法追溯时标为未确认。
 3. `.xcarchive` 的 App 通常在 `Products/Applications/<APP_NAME>.app`；已有导出 `.ipa` 可在本机私有临时目录解包，读取 `Payload/<APP_NAME>.app`。以对应上传构建的 Distribution 签名产物为优先依据，避免误用旧 Debug App。
 
+同一手机可能同时装有不同 Bundle ID 的同名 App；即使显示名和版本/build 相同，也须按实际 Bundle ID 对应分发产物，不能据此认定操作的是新 TestFlight 包。
+
 若当前 iPhone 安装产物无法直接导出，改用朋友一侧对应版本/build 的现成分发产物；找不到时标为未确认，并说明需要哪份对应产物，不用源码或“TestFlight 已安装”推断签名字段。
 
 对已经定位的 `.app`，以下命令只输出必要的非秘密元信息，不打印完整 profile、签名或 entitlement：
