@@ -1,8 +1,18 @@
-# 交给朋友 Codex：核对 TestFlight 与 APNs 资源
+# 交给朋友 Codex：更新配对导入与核对 APNs
 
-请先核对已经完成的工作，再补缺项。本 App 已通过 TestFlight 安装，但目前不确定朋友的 Apple 团队是否已经准备 APNs 资源；不要因此重复创建 key 或重新发版。
+本 App 已通过 TestFlight 1.0 (1) 安装。该构建的配对文件导入仍有期限，现已在源码中移除，须上传包含修复的新构建。APNs 资源先核对已有结果，只补实际缺项，不重复创建 key。
 
 朋友负责核对签名产物、Apple 资源和私密交付；本次 provider 部署在使用者的 Mini，由使用者一侧负责。朋友无需部署服务器、配置 Mini、操作 Android、拨号或发送测试推送。服务器实现已经在 `callbridge_push/server.mjs`，无需另写服务。
+
+## 0. 本次必须更新的 iOS 构建
+
+1. 取得 [本公开仓库](https://github.com/k08847672-web/callbridge-oneplus-ios) 中包含本节的最新修复，记录实际使用的 commit；保留朋友本机已有的签名团队和实际 Bundle ID。
+2. 确认 `PairingStore.swift` 的 `StoredPairing.importFile` 不读取/校验 `expiresAt`，`BridgeModel.swift` 正式导入与 Debug 导入也不再比较日期。旧文件即使日期已过，以及不带该字段的新文件，都应可直接导入；原有密钥、endpoint 和 provider 完整性校验保留。
+3. 工程 `Info.plist` 默认版本为 1.0、build 2。先在 App Store Connect 核对该版本已使用的 build；若 2 已占用，改为未使用的更高数字，不能再次上传 build 1。
+4. 按 [签名与 TestFlight](FRIEND_SIGNING_TESTFLIGHT.md) 使用 Release / 通用 iOS 设备执行 Archive、Validate、上传并开放测试。核对分发的 `aps-environment` 和 `CallBridgePushEnvironment` 均为 `production`，保留已有正确的 PushKit/CallKit 接线。
+5. 告知使用者实际 commit、版本/build 与 TestFlight 可安装状态。使用者安装该新构建后，可直接导入手机已收到的原配对文件；无需因旧 `expiresAt` 重新生成配对或更改 Android/provider 配置。
+
+只有更新 iPhone App 才会移除已安装构建的旧校验。刷新 plist、修改服务器或取得 APNs 私钥都不会改变 TestFlight 1.0 (1) 中的导入判断。本次本地配对回归不代替签名、Archive、TestFlight 上传或手机导入验证；不要据源码已修复报告旧构建已修复。
 
 ## 1. 执行范围与已有授权
 
@@ -80,7 +90,7 @@ Apple 私钥只能下载一次。后台存在 key 而 Download 按钮已不可�
 
 在持有人授权覆盖的范围内，按查明的缺项操作：
 
-- **构建和 App ID 已满足要求，且已有适用 key 与 `.p8`**：直接复用并交付，无需改 App、重新 Archive 或上传 TestFlight。
+- **构建和 App ID 已满足要求，且已有适用 key 与 `.p8`**：直接复用这些资源；本次仍按第 0 节上传包含配对导入修复的新构建，无需为此重新创建 APNs key。
 - **缺少适用 key，或现有 key 的私有文件确实无法找回**：由具备所需角色且已获持有人授权的人，在官方 Keys 入口创建启用 APNs 的适用 key，选择覆盖本 App production VoIP 的环境/范围并妥善下载 `.p8`。不以撤销旧 key 为前置步骤；若配额/角色等阻止创建，记录具体阻塞并交持有人处理，不自动变更其他资源。
 - **App ID 确实未启用 Push Notifications**：只为此 App 补 capability。Apple 提示相关 provisioning profiles 需重新生成时，更新本 App 使用的 profile，不波及其他 App。随后核对现有分发产物是否满足实际 entitlement 要求。
 - **当前 TestFlight 构建实际缺少 production entitlement、正确环境配置或 PushKit 接线**：只补这些已确认缺项，保持原团队和 Bundle ID，按现有签名/上传流程完成必要的新 build，并告知使用者替换为对应 TestFlight 构建。若只是新增/复用服务端 APNs key，通常不需要重新打包 App。

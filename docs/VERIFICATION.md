@@ -2,6 +2,14 @@
 
 本仓库区分源码/协议检查、构建、本地模拟与真实设备验收。
 
+## 2026-11-06 配对导入无期限修复
+
+`IncomingCallSelfTests.swift` 使用生产 `StoredPairing.importFile` 与合成 plist，28 个断言通过：不带 `expiresAt`、旧日期及遥远未来日期均可导入；错误桥接密钥/provider token、不完整 provider 与原有非法 URL 仍被拒绝。其余既有来电协调断言继续通过；不访问真实 Keychain、网络或手机。
+
+生成器使用现有 macOS SDK 编译成功，执行 `callbridge_local.py` 中已有的配对生成检查通过：不输出 `expiresAt`、两端配对 ID/密钥一致、provider token 独立且摘要匹配、私有文件权限保持 0600。只执行该配对检查，没有重跑 Android、音频或完整本地套件。`BridgeModel.swift` 与模拟客户端的 Swift 语法解析、`git diff --check` 通过。
+
+本机通过直接调用现有 Xcode 工具链的 `swiftc`、指定现有 macOS SDK 与 `arm64-apple-macosx14.0` target 完成这些检查；未运行 Xcode first-launch、签名、安装、Archive 或 TestFlight 上传。当前 TestFlight 1.0 (1) 仍需由签名方更新，手机上的真实导入与推送注册尚待新构建验证。
+
 ## 2026-10-24 集中验证
 
 | 检查 | 结果与证据范围 |

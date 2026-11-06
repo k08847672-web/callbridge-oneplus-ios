@@ -34,6 +34,29 @@ struct IncomingCallSelfTests {
         try check(try JSONDecoder().decode(StoredPairing.self, from: JSONEncoder().encode(pairing)) == pairing,
                   "persistent record round trip, no use expiry")
 
+        let importValues: [String: Any] = ["pairing_id": pairingID.uuidString.lowercased(),
+            "endpoint": pairing.endpoint, "port": Int(pairing.port), "pairingKey": key,
+            "providerURL": pairing.providerURL.absoluteString, "providerToken": key, "simulation": false]
+        func importPairing(_ values: [String: Any]) throws -> StoredPairing {
+            try StoredPairing.importFile(PropertyListSerialization.data(fromPropertyList: values,
+                                                                        format: .binary, options: 0))
+        }
+        try check(try importPairing(importValues) == pairing, "import without expiry")
+        for expiry in [Date(timeIntervalSince1970: 0), Date.distantFuture] {
+            var legacy = importValues; legacy["expiresAt"] = expiry
+            try check(try importPairing(legacy) == pairing, "ignore legacy import expiry")
+        }
+        for field in ["pairingKey", "providerToken"] {
+            var bad = importValues; bad[field] = "not-a-key"
+            try check((try? importPairing(bad)) == nil, "reject malformed import key")
+        }
+        for field in ["providerURL", "providerToken"] {
+            var incomplete = importValues; incomplete.removeValue(forKey: field)
+            try check((try? importPairing(incomplete)) == nil, "reject incomplete provider")
+        }
+        var badProvider = importValues; badProvider["providerURL"] = "https://example.invalid/?token=example"
+        try check((try? importPairing(badProvider)) == nil, "preserve provider URL validation")
+
         var time = Date(timeIntervalSince1970: 100)
         var scheduled: [() -> Void] = []
         var events: [String] = []

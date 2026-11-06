@@ -47,7 +47,7 @@ enum PrepareCallBridgePairing {
         var android = "bindAddress=\(endpoint)\nport=47631\npairingKey=\(key)\nallowAnswer=\(!simulation)\npairingId=\(pairingID)\n"
         var iphone: [String: Any] = [
             "pairing_id": pairingID, "endpoint": endpoint, "port": 47631, "pairingKey": key,
-            "expiresAt": Date().addingTimeInterval(600), "simulation": simulation
+            "simulation": simulation
         ]
         var files: [(String, Data)] = []
         if let providerURL {
@@ -64,6 +64,6 @@ enum PrepareCallBridgePairing {
             guard manager.createFile(atPath: directory.appendingPathComponent(name).path, contents: payload,
                                      attributes: [.posixPermissions: 0o600]) else { throw NSError(domain: "Pairing", code: 4) }
         }
-        print("Private pairing files generated; import delivery expires in 10 minutes; durable pairing has no automatic expiry")
+        print("Private pairing files generated; pairing import and saved pairing have no automatic expiry")
     }
 }

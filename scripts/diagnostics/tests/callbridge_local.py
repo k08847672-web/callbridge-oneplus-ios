@@ -1,5 +1,5 @@
 """Actual production JVM admission + Swift client on localhost, with synthetic Call/audio."""
-import datetime, json, os, pathlib, plistlib, select, subprocess, sys, time
+import json, os, pathlib, plistlib, select, subprocess, sys, time
 root = pathlib.Path(__file__).resolve().parents[3]
 build, classpath, node = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
 java = str(pathlib.Path(os.environ['JAVA_HOME']) / 'bin/java')
@@ -51,7 +51,7 @@ try:
     print('PASS mock_provider production_android_publisher HTTP_ingress Swift_coordinator real_JOIN synthetic_PCM ended_tombstone', flush=True)
 finally: stop(provider)
 
-# Pairing delivery file expires at import; both durable configs use the same independent identifiers/keys.
+# Pairing files have no import expiry; both configs use the same independent identifiers/keys.
 pairdir = build/'private-pairing'
 pairdir.mkdir(mode=0o700)
 result = subprocess.run([str(build/'prepare-pairing'), '100.64.0.1', str(pairdir), '--provider-url', 'https://example.invalid'],
@@ -65,6 +65,6 @@ assert iphone['pairing_id'] == android['pairingId'] == providerpair['pairing_id'
 assert iphone['pairingKey'] == android['pairingKey']
 assert iphone['providerToken'] == android['providerToken'] != android['pairingKey']
 assert hashlib.sha256(android['providerToken'].encode()).hexdigest() == providerpair['provider_token_hash']
-assert 0 < iphone['expiresAt'].replace(tzinfo=datetime.timezone.utc).timestamp() - time.time() < 601
+assert 'expiresAt' not in iphone
 assert all(p.stat().st_mode & 0o777 == 0o600 for p in pairdir.iterdir())
-print('PASS private_pairing matching_ids independent_provider_key private_modes import_only_expiry', flush=True)
+print('PASS private_pairing matching_ids independent_provider_key private_modes no_import_expiry', flush=True)

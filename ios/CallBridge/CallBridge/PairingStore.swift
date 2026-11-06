@@ -9,6 +9,21 @@ struct StoredPairing: Codable, Equatable {
     let providerURL: URL
     let providerToken: String
 
+    static func importFile(_ bytes: Data) throws -> StoredPairing {
+        guard bytes.count <= 4096,
+              let values = try PropertyListSerialization.propertyList(from: bytes, format: nil) as? [String: Any],
+              let idText = values["pairing_id"] as? String, let id = CallInvitation.canonicalUUID(idText),
+              let endpoint = values["endpoint"] as? String, let number = values["port"] as? Int,
+              let port = UInt16(exactly: number), let key = values["pairingKey"] as? String,
+              let provider = values["providerURL"] as? String, let url = URL(string: provider),
+              let token = values["providerToken"] as? String, values["simulation"] as? Bool != true else {
+            throw IncomingCallError.missingPairing
+        }
+        // Older files may contain expiresAt. Pairing imports have no delivery deadline.
+        return try StoredPairing(pairingID: id, endpoint: endpoint, port: port, keyHex: key,
+                                 providerURL: url, providerToken: token).validated()
+    }
+
     func validated() throws -> StoredPairing {
         _ = try PJZCallProtocol.validateEndpoint(endpoint, port: port)
         _ = try PJZCallProtocol.decodeKey(keyHex)
@@ -20,8 +35,7 @@ struct StoredPairing: Codable, Equatable {
     }
 }
 
-/// One device pairing, kept locally after first unlock. The import file's ten-minute
-/// delivery window is not a lifetime for the saved pairing or for a normal phone call.
+/// One device pairing, kept locally after first unlock, with no automatic expiry.
 final class PairingStore {
     private let service = (Bundle.main.bundleIdentifier ?? "CallBridge") + ".pairing"
     private let account = "paired-device"

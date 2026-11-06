@@ -195,13 +195,7 @@ final class BridgeModel: ObservableObject {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         do {
-            let bytes = try Data(contentsOf: url)
-            guard bytes.count <= 4096,
-                  let values = try PropertyListSerialization.propertyList(from: bytes, format: nil) as? [String: Any],
-                  let expiry = values["expiresAt"] as? Date, expiry > Date(), expiry.timeIntervalSinceNow <= 600 else {
-                throw IncomingCallError.missingPairing
-            }
-            try savePersistentPairing(values)
+            try savePersistentPairing(StoredPairing.importFile(Data(contentsOf: url)))
             status = "配对已保存到本机钥匙串；推送注册后可等待后台来电。"
             registerPushToken()
             if AVAudioSession.sharedInstance().recordPermission == .undetermined {
@@ -209,21 +203,12 @@ final class BridgeModel: ObservableObject {
             } else if AVAudioSession.sharedInstance().recordPermission == .denied {
                 status = "配对已保存；" + BridgeProtocolError.microphoneDenied.localizedDescription
             }
-        } catch { status = "配对文件无效、已过导入时间或钥匙串不可用。" }
+        } catch { status = "配对文件无效或钥匙串不可用。" }
     }
 
-    private func savePersistentPairing(_ values: [String: Any]) throws {
-        guard let idText = values["pairing_id"] as? String, let id = CallInvitation.canonicalUUID(idText),
-              let endpoint = values["endpoint"] as? String, let number = values["port"] as? Int,
-              let port = UInt16(exactly: number), let key = values["pairingKey"] as? String,
-              let provider = values["providerURL"] as? String, let url = URL(string: provider),
-              let token = values["providerToken"] as? String, values["simulation"] as? Bool != true else {
-            throw IncomingCallError.missingPairing
-        }
-        let pairing = try StoredPairing(pairingID: id, endpoint: endpoint, port: port, keyHex: key,
-                                        providerURL: url, providerToken: token).validated()
+    private func savePersistentPairing(_ pairing: StoredPairing) throws {
         try pairingStore.save(pairing)
-        self.endpoint = endpoint; self.port = String(port); temporaryKey = key
+        endpoint = pairing.endpoint; port = String(pairing.port); temporaryKey = pairing.keyHex
     }
 
     private func registerPushToken() {
@@ -758,7 +743,7 @@ final class BridgeModel: ObservableObject {
     }
 #endif
 
-    // Development delivery only: the trusted Mac copies a fresh temporary file into this
+    // Development delivery only: the trusted Mac copies a pairing file into this
     // App's private container. Consume/delete it on foreground entry; never log its values.
     private func loadOneTimePairing() {
 #if DEBUG
@@ -772,15 +757,13 @@ final class BridgeModel: ObservableObject {
                   let values = try PropertyListSerialization.propertyList(from: bytes, format: nil) as? [String: Any],
                   let host = values["endpoint"] as? String,
                   let number = values["port"] as? Int, let numericPort = UInt16(exactly: number),
-                  let key = values["pairingKey"] as? String,
-                  let expiry = values["expiresAt"] as? Date,
-                  expiry > Date(), expiry.timeIntervalSinceNow <= 600 else { return }
+                  let key = values["pairingKey"] as? String else { return }
             endpoint = try PJZCallProtocol.validateEndpoint(host, port: numericPort)
             _ = try PJZCallProtocol.decodeKey(key)
             port = String(numericPort)
             temporaryKey = key
             if values["pairing_id"] != nil, values["simulation"] as? Bool != true {
-                try savePersistentPairing(values)
+                try savePersistentPairing(StoredPairing.importFile(bytes))
                 registerPushToken()
             }
             simulationPairing = values["simulation"] as? Bool ?? false

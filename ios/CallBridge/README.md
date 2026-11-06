@@ -9,4 +9,4 @@
 - [协议](../../docs/PROTOCOL.md)
 - [已验证与未验证范围](../../docs/VERIFICATION.md)
 
-Release/TestFlight 可通过“设备配对”→“导入设备配对文件”使用系统文件选择器导入私有配置；有效配对保存在本机 Keychain。不要将真实配置、账户、Team ID、证书或私钥加入公开提交。
+Release/TestFlight 可通过“设备配对”→“导入设备配对文件”使用系统文件选择器导入私有配置；有效配对保存在本机 Keychain。导入无期限，旧文件中的 `expiresAt` 字段也会被忽略。不要将真实配置、账户、Team ID、证书或私钥加入公开提交。

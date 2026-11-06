@@ -18,8 +18,7 @@ struct NetworkSimulationSelfTests {
               values["simulation"] as? Bool == true,
               let endpoint = values["endpoint"] as? String,
               let port = values["port"] as? Int, let numericPort = UInt16(exactly: port),
-              let keyText = values["pairingKey"] as? String,
-              let expiry = values["expiresAt"] as? Date, expiry > Date() else { throw Failure.invalidPairing }
+              let keyText = values["pairingKey"] as? String else { throw Failure.invalidPairing }
         let client = BridgeClient()
         let id = UUID()
         let done = DispatchSemaphore(value: 0)

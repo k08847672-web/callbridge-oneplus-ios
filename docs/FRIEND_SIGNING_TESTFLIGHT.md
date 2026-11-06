@@ -22,7 +22,7 @@ provider 的 VoIP topic 应为 App 的 Bundle ID 加 `.voip`。TestFlight/正式
 
 ## 3. Archive 与上传
 
-1. 选择 Release 配置和通用 iOS 设备目标，确认 Bundle ID、Team、版本号及 build number 正确。
+1. 选择 Release 配置和通用 iOS 设备目标，确认 Bundle ID、Team、版本号及 build number 正确。配对导入无期限修复需要替换当前的 1.0 (1)；仓库默认已设为 1.0 (2)。上传前核对 App Store Connect，若 build 2 已占用，递增为未使用的更高 build number，保留既有团队和实际 Bundle ID。
 2. 使用 Product → Archive；在 Organizer 中 Validate App，再选择 Distribute App → App Store Connect 上传。
 3. 在 App Store Connect 等待构建处理完成，按实际情况回答加密/出口合规问题。
 4. 加入内部测试者，或创建外部测试组并提交 Apple 要求的 Beta App Review，再向获准测试者开放。

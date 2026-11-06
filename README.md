@@ -66,7 +66,7 @@ xcodebuild -project ios/CallBridge/CallBridge.xcodeproj \
 
 两台手机加入可互相访问的 Tailscale 网络。Android 桥绑定显式指定的 Tailnet IPv4，默认音频端口为 47631。配对密钥在本地生成，通过私有文件或客户端输入提供，不随源码分发。生成与两端配置步骤见 [配对配置](docs/PAIRING.md)。
 
-iOS 将有效配对保存到本机 Keychain，使 PushKit 唤醒后可以连接原 Android 桥。一次性导入文件的 600 秒有效期用于限制文件导入，不是通话或后台运行时限。
+iOS 将有效配对保存到本机 Keychain，使 PushKit 唤醒后可以连接原 Android 桥。配对文件导入与保存后的配对均无自动过期时间；新 App 也接受旧文件中的 `expiresAt` 字段，无论其日期。
 
 锁屏新来电还需要你自己的 Apple Developer 团队、启用 Push Notifications 的 App ID、正确签名的 iOS App，以及可访问 APNs 的 provider。iOS 注册使用有有效证书的 HTTPS 入口；Node HTTP 后端可通过现有反代或 Tailscale Serve 接入。主机和监听地址由配置决定；不限定服务器区域。配置与本地 mock 见 [provider 说明](docs/PROVIDER.md)，消息格式见 [协议](docs/PROTOCOL.md)。
 
