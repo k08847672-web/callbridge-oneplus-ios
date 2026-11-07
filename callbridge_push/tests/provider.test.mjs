@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http2 from 'node:http2';
+import { EventEmitter } from 'node:events';
 import { generateKeyPairSync, verify } from 'node:crypto';
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { apnsRequest, createApnsJWT, createProvider, loadConfig, sendApnsPush, tokenHash, voipPayload } from '../server.mjs';
@@ -53,6 +54,35 @@ test('HTTP API authenticates the independent token and validates registration', 
   const state = await readFile(f.config.state_file, 'utf8');
   assert.equal(state.includes(TOKEN), false, 'the raw provider token is never persisted');
   if (process.platform !== 'win32') assert.equal((await stat(f.config.state_file)).mode & 0o777, 0o600);
+});
+
+test('completed request diagnostics normalize routes and expose no request material', async (t) => {
+  const f = await fixture(t);
+  const logs = [];
+  t.mock.method(console, 'log', (line) => logs.push(JSON.parse(line)));
+  const base = `http://127.0.0.1:${f.provider.server.address().port}`;
+  const privatePath = '/private-fixture-path?token=private-fixture-query';
+  assert.equal((await fetch(base + privatePath)).status, 404);
+  assert.equal((await fetch(base + '/v1/register')).status, 405);
+  assert.equal((await fetch(base + '/v1/register', { method: 'POST', body: 'private-fixture-invalid-json' })).status, 400);
+  assert.equal((await f.post('/v1/register', registration(), 'private-fixture-bearer')).status, 401);
+  assert.equal((await f.post('/v1/register', registration({ environment: 'invalid' }))).status, 400);
+  assert.equal((await f.post('/v1/calls', event())).status, 409);
+  await mkdir(f.config.state_file);
+  assert.equal((await f.post('/v1/register', registration())).status, 500);
+  assert.deepEqual(logs, [
+    { stage: 'provider_request_result', route: 'other', status: 404 },
+    { stage: 'provider_request_result', route: '/v1/register', status: 405 },
+    { stage: 'provider_request_result', route: '/v1/register', status: 400 },
+    { stage: 'provider_request_result', route: '/v1/register', status: 401 },
+    { stage: 'provider_request_result', route: '/v1/register', status: 400 },
+    { stage: 'provider_request_result', route: '/v1/calls', status: 409 },
+    { stage: 'provider_request_result', route: '/v1/register', status: 500 },
+  ]);
+  for (const privateValue of [privatePath, TOKEN, PUSH_TOKEN, PAIR, CALL, 'private-fixture-bearer']) {
+    assert.equal(JSON.stringify(logs).includes(privateValue), false);
+  }
+  assert.equal(f.provider.server.listening, true);
 });
 
 test('one ringing push, repeated revisions and ended tombstone use the same API', async (t) => {
@@ -148,6 +178,8 @@ test('APNs JWT and request assembly use ES256, correct environment, topic and mi
 });
 
 test('real HTTP/2 sender writes the assembled request to a local synthetic APNs peer', async (t) => {
+  const logs = [];
+  t.mock.method(console, 'log', (line) => logs.push(JSON.parse(line)));
   const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
   const peer = http2.createServer();
   const received = [];
@@ -174,6 +206,81 @@ test('real HTTP/2 sender writes the assembled request to a local synthetic APNs 
   assert.equal(received.length, 1);
   assert.equal(received[0].headers['apns-push-type'], 'voip');
   assert.deepEqual(received[0].payload, voipPayload(event()));
+  assert.deepEqual(logs, [{ stage: 'apns_result', http_status: 200, reason: null }]);
+});
+
+test('APNs rejection diagnostics retain the known reason and discard private or oversized bodies', async (t) => {
+  const logs = [];
+  t.mock.method(console, 'log', (line) => logs.push(JSON.parse(line)));
+  const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+  const responses = [
+    JSON.stringify({ reason: 'TopicDisallowed', token: PUSH_TOKEN, pairing_id: PAIR, call_id: CALL }),
+    JSON.stringify({ reason: 'private-fixture-reason', token: PUSH_TOKEN }),
+    'private-fixture-invalid-json',
+    JSON.stringify({ reason: 'TopicDisallowed', private: 'x'.repeat(4096) }),
+  ];
+  const peer = http2.createServer();
+  peer.on('stream', (stream) => {
+    stream.on('data', () => {});
+    stream.on('end', () => {
+      const response = responses.shift();
+      stream.respond({ ':status': 400 });
+      stream.write(response.slice(0, 5)); stream.end(response.slice(5));
+    });
+  });
+  await new Promise((accept) => peer.listen(0, '127.0.0.1', accept));
+  t.after(() => new Promise((accept) => peer.close(accept)));
+  const message = {
+    apns: { key_id: 'FIXTUREKEY', team_id: 'FIXTURETEAM', topic: 'example.callbridge.voip', privateKey },
+    registration: registration({ environment: 'production' }), payload: voipPayload(event()),
+  };
+  for (let attempt = 0; attempt < 4; attempt++) {
+    await assert.rejects(sendApnsPush(message, {
+      connect: () => http2.connect(`http://127.0.0.1:${peer.address().port}`),
+    }), /APNs rejected request \(400\)/);
+  }
+  assert.deepEqual(logs, [
+    { stage: 'apns_result', http_status: 400, reason: 'TopicDisallowed' },
+    { stage: 'apns_result', http_status: 400, reason: null },
+    { stage: 'apns_result', http_status: 400, reason: null },
+    { stage: 'apns_result', http_status: 400, reason: null },
+  ]);
+  for (const privateValue of [TOKEN, PUSH_TOKEN, PAIR, CALL, 'private-fixture', 'FIXTUREKEY', 'FIXTURETEAM']) {
+    assert.equal(JSON.stringify(logs).includes(privateValue), false);
+  }
+});
+
+test('APNs transport diagnostics keep only a standard error class', async (t) => {
+  const logs = [];
+  t.mock.method(console, 'log', (line) => logs.push(JSON.parse(line)));
+  const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+  const message = {
+    apns: { key_id: 'FIXTUREKEY', team_id: 'FIXTURETEAM', topic: 'example.callbridge.voip', privateKey },
+    registration: registration(), payload: voipPayload(event()),
+  };
+  await assert.rejects(sendApnsPush(message, {
+    connect: () => { throw new TypeError('private-fixture-connect-message'); },
+  }), TypeError);
+  for (const failure of ['session', 'stream']) {
+    const session = new EventEmitter();
+    session.destroy = () => {};
+    session.request = () => {
+      const stream = new EventEmitter();
+      stream.end = () => queueMicrotask(() => {
+        const error = new RangeError('private-fixture-transport-message');
+        if (failure === 'stream') error.name = 'private-fixture-error-name';
+        (failure === 'session' ? session : stream).emit('error', error);
+      });
+      return stream;
+    };
+    await assert.rejects(sendApnsPush(message, { connect: () => session }), /APNs .* failed/);
+  }
+  assert.deepEqual(logs, [
+    { stage: 'apns_result', http_status: 0, reason: null, transport_error_class: 'TypeError' },
+    { stage: 'apns_result', http_status: 0, reason: null, transport_error_class: 'RangeError' },
+    { stage: 'apns_result', http_status: 0, reason: null, transport_error_class: 'Error' },
+  ]);
+  assert.equal(JSON.stringify(logs).includes('private-fixture'), false);
 });
 
 test('private configuration resolves relative paths and APNs startup accepts a generated P-256 key', async (t) => {

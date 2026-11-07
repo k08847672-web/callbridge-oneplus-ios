@@ -1,10 +1,16 @@
-# 交给朋友 Codex：更新配对导入与核对 APNs
+# 交给朋友 Codex：修复 production APNs TopicDisallowed
 
-本 App 已通过 TestFlight 1.0 (1) 安装。该构建的配对文件导入仍有期限，现已在源码中移除，须上传包含修复的新构建。APNs 资源先核对已有结果，只补实际缺项，不重复创建 key。
+本次优先执行第 3 节新增的“本次 `TopicDisallowed` 的具体核对顺序”，再按第 4 节处理查明的实际缺项。2026-11-07 已确认 TestFlight 1.0 (2)、配对导入成功及 Mini 的 1 条 production PushKit token 注册，无需重做导入，也不为服务端 key 的核对先重新打包 App。
+
+使用该真实注册、现有 provider 配置及新的 HTTP/2 连接直接请求 production APNs，2026-11-07 10:17:47 UTC 返回 **HTTP 400 / `TopicDisallowed`**，Apple 未接受推送。当前任务是核对并修正这个独立的 APNs 授权阻断；不要求使用者再次真人拨号来定位它。朋友返回实际 key 的 APNs 服务、环境、scope、VoIP 关联范围及已做的修正；若确需更换 key，`.p8` 仅经既有私密文件通道交付，绝不进入聊天或 Git。
+
+Apple 对 `TopicDisallowed` 的定义是“不允许向该 topic 推送”。此前使用无效 token 得到的 `BadDeviceToken` 不能证明实际 VoIP topic 已获授权；私钥能签 JWT、provider 健康、token 注册成功，也不能替代真实 APNs 接受结果。现有结果尚不能区分 key 的服务/环境/范围与 App ID 授权哪一项缺失，不能据此认定必须新建 key 或重发 App。
 
 朋友负责核对签名产物、Apple 资源和私密交付；本次 provider 部署在使用者的 Mini，由使用者一侧负责。朋友无需部署服务器、配置 Mini、操作 Android、拨号或发送测试推送。服务器实现已经在 `callbridge_push/server.mjs`，无需另写服务。
 
-## 0. 本次必须更新的 iOS 构建
+## 0. 已完成的配对导入更新；旧构建才需执行
+
+本轮已确认的 1.0 (2) 无需重复执行本节。仅当实际安装的仍是保留导入期限的旧构建时，按以下步骤更新；APNs 服务端 key 授权问题本身不构成重发 iOS App 的依据。
 
 1. 取得 [本公开仓库](https://github.com/k08847672-web/callbridge-oneplus-ios) 中包含本节的最新修复，记录实际使用的 commit；保留朋友本机已有的签名团队和实际 Bundle ID。
 2. 确认 `PairingStore.swift` 的 `StoredPairing.importFile` 不读取/校验 `expiresAt`，`BridgeModel.swift` 正式导入与 Debug 导入也不再比较日期。旧文件即使日期已过，以及不带该字段的新文件，都应可直接导入；原有密钥、endpoint 和 provider 完整性校验保留。
@@ -84,13 +90,21 @@ Archive 中的原始 App 可能尚未经过 Distribution 导出时的重新签�
 3. 核对范围：新 key 可为环境限定的 Team Scoped 或 Topic Specific；已有兼容两种环境的旧 key 仍可能可用，无需仅为改成新形式而替换。Topic Specific key 要核对范围覆盖本 App 所需的 VoIP topic，不能只凭同一 Team 判为适用。目标 topic 是 `<ACTUAL_BUNDLE_ID>.voip`，目标环境是 production。以当前 Apple 后台及官方说明为准；无法确认适用性时如实报告。
 4. 核对所选 key 对应的私有 `.p8` 是否已经在持有人批准查看的备份目录或既有 provider 中保存。只确认匹配的 Key ID、文件存在及访问权限，不输出私钥内容、不扫描无关目录或主机。
 
+### 本次 `TopicDisallowed` 的具体核对顺序
+
+1. 从使用者一侧取得 `<TEAM_ID>`、`<KEY_ID>`、`<ACTUAL_BUNDLE_ID>` 和 `<ACTUAL_BUNDLE_ID>.voip` 的非秘密元信息。在该团队的 **Keys → 对应 Key ID** 查看 Apple Push Notification service 是否启用，并记录当前环境、Team Scoped / Topic Specific 类型及关联范围；`.p8` 文件本身不包含这些后台授权元数据。
+2. 目标环境是 production。Team Scoped key 应属于同一团队并覆盖 production；兼容 production 的既有旧 key 也可复用。Topic Specific key 要按后台实际关联的 App/topic 范围核对本 App 及其 VoIP 推送适用性，不能只看到同一 Team 或裸 Bundle ID 就报告已验证。保留 `apns-push-type: voip` 与 `apns-topic: <ACTUAL_BUNDLE_ID>.voip`；不要通过改成普通通知 topic 绕过错误，也不另建带 `.voip` 后缀的 App ID。
+3. 在 **Identifiers → `<ACTUAL_BUNDLE_ID>`** 核对同一团队的 Push Notifications capability；与第 2 节的实际分发产物 Bundle ID、团队和 production entitlement 对齐。只报告已看到的字段；仓库默认的示例 Bundle ID、Release 配置和已上传构建不能互相替代。
+4. 若已证实只是现有 key 未启用 APNs 服务，按持有人已有授权在 **Key → Edit → Services** 补对应服务；若是范围不适用，先找同团队已覆盖 production VoIP 的现成 key 及其私有文件。是否可直接调整当前 key 的具体范围，以 Apple 后台实际可用操作为准；只有没有可复用资源时才提出必要的新 key，不撤销旧 key。若只有服务端 key/范围改变，通常无需重发 App；只有实际分发 entitlement 或 App ID capability 缺失涉及 profile 时，才处理本 App 所需产物。
+5. 把上述非秘密核对结果交回使用者一侧，必要时修正 Mini 对应配置，再执行一次不拨真实号码的 production APNs 检查。HTTP 200 才表明 Apple 接受；还需单独观察 iPhone PushKit / CallKit。该检查不是蜂窝双向音频验收，也不要求朋友部署 provider、操作 Android 或发送推送。
+
 Apple 私钥只能下载一次。后台存在 key 而 Download 按钮已不可用，不表示可以重新下载；先查持有人的私有备份或已授权的既有 provider。找不到时说明“已有 key，但私有文件未找到”；不得假装已取得，也不得擅自撤销旧 key、轮换或清空其他 App 正在使用的资源。
 
 ## 4. 只有实际缺项才补齐
 
 在持有人授权覆盖的范围内，按查明的缺项操作：
 
-- **构建和 App ID 已满足要求，且已有适用 key 与 `.p8`**：直接复用这些资源；本次仍按第 0 节上传包含配对导入修复的新构建，无需为此重新创建 APNs key。
+- **构建和 App ID 已满足要求，且已有适用 key 与 `.p8`**：直接复用这些资源；已安装包含配对修复的 1.0 (2) 时不重复上传，也无需为此重新创建 APNs key。
 - **缺少适用 key，或现有 key 的私有文件确实无法找回**：由具备所需角色且已获持有人授权的人，在官方 Keys 入口创建启用 APNs 的适用 key，选择覆盖本 App production VoIP 的环境/范围并妥善下载 `.p8`。不以撤销旧 key 为前置步骤；若配额/角色等阻止创建，记录具体阻塞并交持有人处理，不自动变更其他资源。
 - **App ID 确实未启用 Push Notifications**：只为此 App 补 capability。Apple 提示相关 provisioning profiles 需重新生成时，更新本 App 使用的 profile，不波及其他 App。随后核对现有分发产物是否满足实际 entitlement 要求。
 - **当前 TestFlight 构建实际缺少 production entitlement、正确环境配置或 PushKit 接线**：只补这些已确认缺项，保持原团队和 Bundle ID，按现有签名/上传流程完成必要的新 build，并告知使用者替换为对应 TestFlight 构建。若只是新增/复用服务端 APNs key，通常不需要重新打包 App。
@@ -107,6 +121,7 @@ Apple Team ID: <TEAM_ID>
 APNs Key ID: <KEY_ID>
 VoIP topic: <ACTUAL_BUNDLE_ID>.voip
 APNs key 环境与范围: <production或兼容production的既有key；实际scope>
+本次 TopicDisallowed 核对: <APNs服务、环境、关联范围、App ID capability及各自证据>
 TestFlight 版本 / build: <VERSION> / <BUILD_NUMBER>
 对应源码 commit: <COMMIT或未确认>
 App ID Push Notifications: <已确认启用或缺项>
@@ -135,4 +150,5 @@ Mini 上的最终仓库外私有目录和传输目的地由使用者一侧确认
 - [启用 App capability 与 profile 影响](https://developer.apple.com/help/account/identifiers/enable-app-capabilities/)
 - [APNs token 认证及 key 范围](https://developer.apple.com/documentation/usernotifications/establishing-a-token-based-connection-to-apns)
 - [APNs 请求、VoIP push type 与 topic](https://developer.apple.com/documentation/usernotifications/sending-notification-requests-to-apns)
+- [APNs HTTP 状态与 TopicDisallowed 等 reason](https://developer.apple.com/documentation/usernotifications/handling-notification-responses-from-apns)
 - [PushKit 接入](https://developer.apple.com/documentation/pushkit/supporting-pushkit-notifications-in-your-app)

@@ -10,6 +10,38 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const HASH = /^[0-9a-f]{64}$/;
 const ENVIRONMENTS = new Set(['sandbox', 'production']);
 const APNS_JWT_CACHE = new WeakMap();
+// Only Apple-defined reason values may leave the response parser. Never log response bodies.
+const APNS_REASONS = new Set([
+  'BadCollapseId', 'BadDeviceToken', 'BadExpirationDate', 'BadMessageId', 'BadPriority', 'BadTopic',
+  'DeviceTokenNotForTopic', 'DuplicateHeaders', 'IdleTimeout', 'InvalidPushType', 'MissingDeviceToken',
+  'MissingTopic', 'PayloadEmpty', 'TopicDisallowed', 'BadCertificate', 'BadCertificateEnvironment',
+  'ExpiredProviderToken', 'Forbidden', 'InvalidProviderToken', 'MissingProviderToken', 'UnrelatedKeyIdInToken',
+  'BadEnvironmentKeyIdInToken', 'BadPath', 'MethodNotAllowed', 'ExpiredToken', 'Unregistered',
+  'PayloadTooLarge', 'TooManyProviderTokenUpdates', 'TooManyRequests', 'InternalServerError',
+  'ServiceUnavailable', 'Shutdown',
+]);
+const ERROR_CLASSES = new Set(['Error', 'TypeError', 'RangeError', 'AggregateError', 'SyntaxError',
+  'ReferenceError', 'URIError', 'EvalError']);
+
+function diagnostic(stage, fields) {
+  console.log(JSON.stringify({ stage, ...fields }));
+}
+
+function apnsDiagnostic(status, chunks = [], length = 0, transportError = null) {
+  let reason = null;
+  if (status !== 200 && length <= 4096) {
+    try {
+      const value = JSON.parse(Buffer.concat(chunks).toString('utf8')).reason;
+      if (APNS_REASONS.has(value)) reason = value;
+    } catch { /* Missing or unrecognized response bodies stay private. */ }
+  }
+  diagnostic('apns_result', {
+    http_status: status, reason,
+    ...(transportError === null ? {} : {
+      transport_error_class: ERROR_CLASSES.has(transportError?.name) ? transportError.name : 'Error',
+    }),
+  });
+}
 
 export function tokenHash(token) {
   return createHash('sha256').update(token).digest('hex');
@@ -80,33 +112,42 @@ export function apnsRequest({ apns, registration, payload }, now = Date.now()) {
 
 export async function sendApnsPush(message, { connect = http2.connect, now = Date.now() } = {}) {
   const request = apnsRequest(message, now);
-  const session = connect(request.origin);
+  let session;
+  try { session = connect(request.origin); }
+  catch (error) { apnsDiagnostic(0, [], 0, error); throw error; }
   try {
     await new Promise((accept, reject) => {
       let settled = false;
       let status = 0;
       let stream;
-      const finish = (error) => {
+      const responseChunks = [];
+      let responseLength = 0;
+      const finish = (error, transportError = null) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        apnsDiagnostic(status, responseChunks, responseLength, transportError);
         if (error) reject(error); else accept();
       };
       const timer = setTimeout(() => {
         stream?.close(http2.constants.NGHTTP2_CANCEL);
-        finish(new Error('APNs request timed out'));
+        const error = new Error('APNs request timed out');
+        finish(error, error);
       }, 10_000);
       timer.unref();
-      session.once('error', () => finish(new Error('APNs connection failed')));
+      session.once('error', (error) => finish(new Error('APNs connection failed'), error));
       try {
         stream = session.request(request.headers);
         stream.on('response', (headers) => { status = Number(headers[':status']); });
-        stream.on('data', () => {});
-        stream.once('error', () => finish(new Error('APNs request failed')));
+        stream.on('data', (chunk) => {
+          responseLength += chunk.length;
+          if (responseLength <= 4096) responseChunks.push(Buffer.from(chunk));
+        });
+        stream.once('error', (error) => finish(new Error('APNs request failed'), error));
         stream.once('end', () => finish(status === 200 ? undefined : new Error(`APNs rejected request (${status})`)));
         stream.end(request.body);
-      } catch {
-        finish(new Error('APNs request failed'));
+      } catch (error) {
+        finish(new Error('APNs request failed'), error);
       }
     });
   } finally {
@@ -211,6 +252,8 @@ export async function createProvider(rawConfig, { pushSender } = {}) {
   const sendPush = pushSender ?? (config.mode === 'apns' ? sendApnsPush : async () => {});
 
   const server = http.createServer(async (request, response) => {
+    const route = ['/v1/register', '/v1/calls'].includes(request.url) ? request.url : 'other';
+    response.once('finish', () => diagnostic('provider_request_result', { route, status: response.statusCode }));
     if (!['/v1/register', '/v1/calls'].includes(request.url)) return reply(response, 404, { error: 'not_found' });
     if (request.method !== 'POST') return reply(response, 405, { error: 'method_not_allowed' });
     let body;

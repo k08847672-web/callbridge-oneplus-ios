@@ -403,7 +403,10 @@ public final class TelephonyNetworkBridge {
                     event = events.removeFirst();
                 }
                 boolean sent = false;
+                int status = 0, attempts = 0;
+                String errorClass = "none";
                 for (int attempt = 0; attempt < 3 && !sent; attempt++) {
+                    attempts++;
                     HttpURLConnection connection = null;
                     byte[] body = event.getBytes(StandardCharsets.UTF_8);
                     try {
@@ -416,16 +419,21 @@ public final class TelephonyNetworkBridge {
                         connection.setRequestProperty("Content-Type", "application/json");
                         connection.setFixedLengthStreamingMode(body.length);
                         try (java.io.OutputStream output = connection.getOutputStream()) { output.write(body); }
-                        int status = connection.getResponseCode();
+                        status = connection.getResponseCode();
+                        errorClass = "none";
                         sent = status >= 200 && status < 300;
                         if (!sent && status < 500) break;
-                    } catch (Exception error) { /* Report only the outcome, never URLs/auth/body/response. */ }
+                    } catch (Exception error) {
+                        status = 0;
+                        errorClass = error.getClass().getName();
+                    }
                     finally { Arrays.fill(body, (byte) 0); if (connection != null) connection.disconnect(); }
                     if (!sent && attempt < 2) try { Thread.sleep(200 * (attempt + 1)); }
                     catch (InterruptedException done) { Thread.currentThread().interrupt(); return; }
                 }
                 if (config.bindAddress.isLoopbackAddress()) System.out.println("PJZ_LOCAL_PUSH accepted=" + sent);
-                else emit("push_event_result", "accepted", sent);
+                else emit("push_event_result", "accepted", sent, "http_status", status,
+                        "attempts", attempts, "error_class", errorClass);
             }
         }
         @Override public synchronized void close() { closed = true; notifyAll(); /* Worker drains ordered events. */ }
@@ -663,12 +671,18 @@ public final class TelephonyNetworkBridge {
     }
 
     /** Shell-only local control of one exact Call object held by the minimal InCallService. */
+    private static final class OwnedCallFailure extends IOException {
+        final String reason;
+        OwnedCallFailure(String reason, Throwable cause) { super(reason, cause); this.reason = reason; }
+    }
+
     private static final class OwnedCall implements AutoCloseable {
         final android.net.LocalSocket channel;
         final DataOutputStream output;
         final String callId;
         final CountDownLatch initialState = new CountDownLatch(1);
         volatile int state = -1;
+        volatile IOException observationError;
         Thread observer;
         OwnedCall(Context context, byte[] token) throws Exception {
             int helperUid = context.getPackageManager().getApplicationInfo("com.doitio.callbridgehelper", 0).uid;
@@ -684,18 +698,24 @@ public final class TelephonyNetworkBridge {
                     selected = attempt;
                 } catch (IOException notReady) {
                     attempt.close();
-                    if (now() >= readyUntil) throw new IOException("owned_call_helper_unavailable");
+                    if (now() >= readyUntil) throw new OwnedCallFailure("helper_connect_unavailable", notReady);
                     SystemClock.sleep(20);
                 }
             }
             channel = selected;
-            output = new DataOutputStream(channel.getOutputStream());
-            output.writeInt(0x50435a32); output.write(token); output.flush();
-            channel.setSoTimeout(4000);
-            DataInputStream input = new DataInputStream(channel.getInputStream());
-            byte[] identity = new byte[36]; input.readFully(identity);
-            callId = canonicalId(new String(identity, StandardCharsets.US_ASCII));
-            channel.setSoTimeout(0);
+            final DataInputStream input;
+            try {
+                output = new DataOutputStream(channel.getOutputStream());
+                output.writeInt(0x50435a32); output.write(token); output.flush();
+                channel.setSoTimeout(4000);
+                input = new DataInputStream(channel.getInputStream());
+                byte[] identity = new byte[36]; input.readFully(identity);
+                callId = canonicalId(new String(identity, StandardCharsets.US_ASCII));
+                channel.setSoTimeout(0);
+            } catch (Exception error) {
+                try { channel.close(); } catch (IOException ignored) { }
+                throw new OwnedCallFailure("helper_identity_exchange_failed", error);
+            }
             observer = daemon("bridge-original-call-observer", () -> {
                 try {
                     while (true) {
@@ -704,12 +724,15 @@ public final class TelephonyNetworkBridge {
                         state = value; initialState.countDown();
                         if (value == 0) return;
                     }
-                } catch (IOException ended) { state = 0; initialState.countDown(); }
+                } catch (IOException ended) { observationError = ended; state = 0; initialState.countDown(); }
             });
         }
         void observeBeforeAnswer() throws Exception {
-            if (!initialState.await(3, TimeUnit.SECONDS) || state != 1)
-                throw new IOException("fresh_original_ringing_call_required");
+            if (!initialState.await(3, TimeUnit.SECONDS))
+                throw new OwnedCallFailure("helper_initial_state_timeout", null);
+            if (state != 1)
+                throw new OwnedCallFailure(observationError == null ? "helper_call_not_ringing" : "helper_initial_state_failed",
+                        observationError);
         }
         synchronized void answer() throws IOException {
             if (state != 1) throw new IOException("original_call_not_ringing");
@@ -801,7 +824,8 @@ public final class TelephonyNetworkBridge {
                 if (isRinging) {
                     if (!ringSeen) {
                         OwnedCall observed = new OwnedCall(context, sessionToken);
-                        observed.observeBeforeAnswer();
+                        try { observed.observeBeforeAnswer(); }
+                        catch (Exception error) { observed.close(); throw error; }
                         synchronized (transportLock) {
                             ownedCall = observed;
                             incoming.ring(observed.callId);
@@ -1530,7 +1554,11 @@ public final class TelephonyNetworkBridge {
     private static void failure(String stage, Throwable error) {
         while (error instanceof InvocationTargetException && error.getCause() != null) error = error.getCause();
         // No exception messages, addresses, pairing material, raw dumps, phone numbers or PCM.
-        emit(stage, "error_class", error.getClass().getName());
+        if (error instanceof OwnedCallFailure) {
+            OwnedCallFailure failed = (OwnedCallFailure) error;
+            emit(stage, "error_class", IOException.class.getName(), "reason", failed.reason,
+                    "cause_class", failed.getCause() == null ? "none" : failed.getCause().getClass().getName());
+        } else emit(stage, "error_class", error.getClass().getName());
     }
     private static void emit(String stage, Object... fields) {
         try {

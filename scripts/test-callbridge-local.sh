@@ -37,6 +37,7 @@ fi
   "$CALLBRIDGE_TEST_BUILD" "$CALLBRIDGE_CP" "$CALLBRIDGE_NODE"
 "$CALLBRIDGE_PYTHON" "$CALLBRIDGE_ROOT/scripts/diagnostics/tests/callbridge_transport_regression.py" "$CALLBRIDGE_TEST_BUILD"
 "$CALLBRIDGE_PYTHON" "$CALLBRIDGE_ROOT/scripts/diagnostics/tests/callbridge_helper_regression.py" "$CALLBRIDGE_TEST_BUILD"
+"$CALLBRIDGE_PYTHON" "$CALLBRIDGE_ROOT/scripts/diagnostics/tests/callbridge_android_ingress_regression.py" "$CALLBRIDGE_TEST_BUILD"
 "$CALLBRIDGE_PYTHON" "$CALLBRIDGE_ROOT/scripts/diagnostics/tests/callbridge_swift_recovery.py" "$CALLBRIDGE_TEST_BUILD"
 "$CALLBRIDGE_NODE" --test "$CALLBRIDGE_ROOT"/callbridge_push/tests/*.test.mjs
 printf 'PASS local synthetic checks. Hardware, APNs delivery and locked-screen wakeup remain unverified. Artifacts: %s\n' "$CALLBRIDGE_TEST_BUILD"
