@@ -1,10 +1,10 @@
 # 交给朋友 Codex：修复 production APNs TopicDisallowed
 
-本次优先执行第 3 节新增的“本次 `TopicDisallowed` 的具体核对顺序”，再按第 4 节处理查明的实际缺项。2026-11-07 已确认 TestFlight 1.0 (2)、配对导入成功及 Mini 的 1 条 production PushKit token 注册，无需重做导入，也不为服务端 key 的核对先重新打包 App。
+当前状态：朋友已在现有 Production / Topic Specific key 的范围中补入本 App。使用同一 provider 配置、同一 key、同一真实 production token 一次重测，**2026-11-07 12:43:50.308 UTC 返回 HTTP 200 / `AppleAccepted=true`**，原 `TopicDisallowed` 阻断已解除。随后使用同配对的合成来电 peer 完成真实 production APNs HTTP 200、配对 AUTH / JOIN，并直接观察到物理 iPhone 锁屏上的“一加来电 · 通话桥”和“滑动来接听”系统 CallKit 界面；**真实生产推送与物理 iPhone 锁屏 CallKit 的模拟验收已通过**。这次合成测试不触碰真实 Telecom 或蜂窝音频；真实蜂窝来电 → helper 这一跳、真人双向音频、真实挂断和断线恢复本轮尚未验证，不能写为全功能通过。无需用户再更新 App、导入配对或朋友再修改 key；第 3、4 节原流程保留作实际缺项排查参考。
 
-使用该真实注册、现有 provider 配置及新的 HTTP/2 连接直接请求 production APNs，2026-11-07 10:17:47 UTC 返回 **HTTP 400 / `TopicDisallowed`**，Apple 未接受推送。当前任务是核对并修正这个独立的 APNs 授权阻断；不要求使用者再次真人拨号来定位它。朋友返回实际 key 的 APNs 服务、环境、scope、VoIP 关联范围及已做的修正；若确需更换 key，`.p8` 仅经既有私密文件通道交付，绝不进入聊天或 Git。
+历史证据：2026-11-07 已确认 TestFlight 1.0 (2)、配对导入成功及 Mini 的 1 条 production PushKit token 注册；当日 10:17:47 UTC 使用真实注册请求 production APNs 曾返回 **HTTP 400 / `TopicDisallowed`**。后续补充上述现有 key 的关联范围并取得真实 HTTP 200，无需使用者再次真人拨号来定位该授权问题。若将来实际缺项确需更换 key，`.p8` 仍仅经既有私密文件通道交付，绝不进入聊天或 Git。
 
-Apple 对 `TopicDisallowed` 的定义是“不允许向该 topic 推送”。此前使用无效 token 得到的 `BadDeviceToken` 不能证明实际 VoIP topic 已获授权；私钥能签 JWT、provider 健康、token 注册成功，也不能替代真实 APNs 接受结果。现有结果尚不能区分 key 的服务/环境/范围与 App ID 授权哪一项缺失，不能据此认定必须新建 key 或重发 App。
+Apple 对 `TopicDisallowed` 的定义是“不允许向该 topic 推送”。此前使用无效 token 得到的 `BadDeviceToken` 不能证明实际 VoIP topic 已获授权；私钥能签 JWT、provider 健康、token 注册成功，也不能替代真实 APNs 接受结果。仅凭原错误不能认定必须新建 key 或重发 App；本次已通过补充现有 key 范围后的真实 HTTP 200 验证 Apple 接受。
 
 朋友负责核对签名产物、Apple 资源和私密交付；本次 provider 部署在使用者的 Mini，由使用者一侧负责。朋友无需部署服务器、配置 Mini、操作 Android、拨号或发送测试推送。服务器实现已经在 `callbridge_push/server.mjs`，无需另写服务。
 
