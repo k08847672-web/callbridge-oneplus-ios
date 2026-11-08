@@ -2,7 +2,9 @@
 
 2026-11-08 本轮真机验收通过：真实 SIM 呼入时，iPhone 锁屏出现系统来电界面并成功接听；使用者确认双方声音正常，在 iPhone 挂断后一加也同步结束。Mini 已记录 1 次真实来电（排除之前的合成 `ended`），最终为 `ended / revision=2`，本次 APNs 返回 HTTP 200。先前合成记录不计入真实验收。
 
-Android 原生产监听因 `helper_connect_unavailable` 退出，真实来电未走到 provider。原 AF_UNIX 路径已在实体机 shell 连接时复现 `EACCES`，但具体拒绝原因及对应的 SELinux 规则尚未证实；`Context.bindService` 探针则返回 `not_registered_caller`。现已完成 `getContentProviderExternal → Binder` 的生产迁移：helper 0.4 以同签名覆盖安装，生产 JAR 短哈希为 `29b531f2fa10`；已核对实体进程、`CLASSPATH` 使用新 JAR，以及 47631 端口监听。新日志出现 `helper_ready`（`installed=true`、`default_dialer_changed=false`）和 `listening`；部署后实体机 shell 的 Provider → Binder `PING` 再次返回 `version=1`、`state=0`。所需 AppOp 核验为 `allow`，默认拨号器保持不变。本轮真实通话结束后，一加同一生产进程保持监听，供下一次来电使用。**真实意外断线后的自动恢复未在本轮测试**；实现及本地回归结果不代替该项真人验证。
+2026-11-08 后续姓名/号码与系统“电话”Recents 更新：Android helper **0.5** 与新桥接 JAR 已部署，联系人读取已授权，实体 shell 的 Provider → Binder `PING` 返回 `version=2 / state=0`，生产监听正常；Mini 的身份即时转发版本也已部署，配置、key、状态和 HTTPS 入口保持原样。iOS 源码版本为 **1.0 (3)**，待天才狗沿用既有团队和 Bundle ID 签名、发布 TestFlight；新版来电身份显示与系统 Recents 仍待安装该构建后实测。该待测项不改变上文已经通过的核心来电、双向声音及同步挂断验收。发布步骤见 [朋友签名与 TestFlight](FRIEND_SIGNING_TESTFLIGHT.md)。
+
+2026-11-08 核心通话修复记录：Android 原生产监听因 `helper_connect_unavailable` 退出，真实来电未走到 provider。原 AF_UNIX 路径已在实体机 shell 连接时复现 `EACCES`，但具体拒绝原因及对应的 SELinux 规则尚未证实；`Context.bindService` 探针则返回 `not_registered_caller`。当时已完成 `getContentProviderExternal → Binder` 的生产迁移：helper 0.4 以同签名覆盖安装，生产 JAR 短哈希为 `29b531f2fa10`；已核对实体进程、`CLASSPATH` 使用新 JAR，以及 47631 端口监听。新日志出现 `helper_ready`（`installed=true`、`default_dialer_changed=false`）和 `listening`；部署后实体机 shell 的 Provider → Binder `PING` 再次返回 `version=1`、`state=0`。所需 AppOp 核验为 `allow`，默认拨号器保持不变。本轮真实通话结束后，一加同一生产进程保持监听，供下一次来电使用。**真实意外断线后的自动恢复未在本轮测试**；实现及本地回归结果不代替该项真人验证。
 
 iPhone 界面的“未连接”描述前台桥接连接状态，与 PushKit 启动及 token 注册独立；注册成功也不会更新这句文案。后台来电由 PushKit / CallKit 触发后再连接原通话；本次 Android 修复不要求 iPhone 重新配对或手点“连接”来保持待机，也不能只凭这句文案判断后台推送是否就绪。
 

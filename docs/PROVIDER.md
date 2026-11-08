@@ -66,8 +66,8 @@ node callbridge_push/server.mjs --config /path/to/private-callbridge/production.
 
 客户端向 `/v1/register` 注册 `push_token` 和 `environment`。环境只接受 `sandbox` 或 `production`：开发签名使用匹配的 sandbox token；TestFlight 使用 production token。配置改变或重新安装后，使用客户端当前注册的 token。
 
-Android 通过 `/v1/calls` 发布 `ringing` / `ended`。provider 使用独立 Bearer token 认证，按 `call_id` 与 `revision` 去重；只有有效的新响铃发送一次 VoIP push。payload 为 `{aps:{},pairing_id,call_id,revision,state:"ringing"}`，不包含电话号码、联系人、音频或直连配对密钥，也不设置应用层来电寿命。
+Android 通过 `/v1/calls` 发布 `ringing` / `ended`。provider 使用独立 Bearer token 认证，按 `call_id` 与 `revision` 去重；只有有效的新响铃发送一次 VoIP push。payload 保留 `{aps:{},pairing_id,call_id,revision,state:"ringing"}`，首次响铃已有身份时附带可选的 `caller_name` / `caller_number`。字段按 [协议](PROTOCOL.md) 清洗；缺失身份的旧客户端仍使用原格式。姓名和号码只在本次事件内存中转发，不写入 `state_file`、日志或配置，不包含音频或直连配对密钥，也不设置应用层来电寿命。
 
-provider 在发送前持久化这次尝试，避免重复事件或进程重启导致重复推送。发送失败返回 `502 push_attempt_failed`；结果不确定的同一次推送不会自动重发。`ended` 只保存结束状态，不发送新的 VoIP push，迟到响铃不会覆盖已结束的同一个 Call。
+provider 在发送前仅持久化原有通话状态和本次尝试标记，避免重复事件或进程重启导致重复推送；状态文件格式与配置无需为身份字段变更。迟到姓名由已认证直连更新，不补发 push。发送失败返回 `502 push_attempt_failed`；结果不确定的同一次推送不会自动重发。`ended` 只保存结束状态，不发送新的 VoIP push，迟到响铃不会覆盖已结束的同一个 Call。
 
 真实 APNs 接受请求只证明 provider 的发送步骤。iPhone 收到推送、CallKit 报告来电、JOIN 匹配、用户接听、两向声音以及挂断都需要单独观察。签名与 TestFlight 步骤见 [朋友签名](FRIEND_SIGNING_TESTFLIGHT.md)。

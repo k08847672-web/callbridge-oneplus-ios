@@ -62,13 +62,19 @@ export async function loadConfig(filename) {
 }
 
 export function voipPayload(event) {
-  return {
+  const payload = {
     aps: {},
     pairing_id: event.pairing_id,
     call_id: event.call_id,
     revision: event.revision,
     state: 'ringing',
   };
+  for (const field of ['caller_name', 'caller_number']) {
+    if (typeof event[field] !== 'string') continue;
+    const value = event[field].replace(/[\u0000-\u001f\u007f]/g, '').trim();
+    if (value) payload[field] = value;
+  }
+  return payload;
 }
 
 export function createApnsJWT(apns, now = Date.now()) {
@@ -301,7 +307,11 @@ export async function createProvider(rawConfig, { pushSender } = {}) {
       const duplicate = body.state === 'ringing' && Boolean(previous);
       if (body.state === 'ringing' && !duplicate) {
         try {
-          await sendPush({ apns: config.apns, registration, payload: voipPayload(record) });
+          // Identity belongs only to this immediate delivery, never the persisted Call record.
+          const payload = voipPayload({
+            ...record, caller_name: body.caller_name, caller_number: body.caller_number,
+          });
+          await sendPush({ apns: config.apns, registration, payload });
         } catch {
           return reply(response, 502, { error: 'push_attempt_failed' });
         }

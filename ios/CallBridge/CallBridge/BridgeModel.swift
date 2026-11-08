@@ -27,13 +27,16 @@ final class BridgeModel: ObservableObject {
     private var remoteCallID: UUID?
     private var connectionPairingID: UUID?
     private var joiningIncoming = false
+    private var callerIdentity = CallIdentityState()
     private lazy var incoming = IncomingCallCoordinator(loadPairing: { [weak self] id in
         guard let pairing = try self?.pairingStore.load(), pairing.pairingID == id else {
             throw IncomingCallError.missingPairing
         }
         return pairing
-    }, reportIncoming: { [weak self] id, completion in
-        self?.prepareIncomingReport(id: id, completion: completion)
+    }, reportIncoming: { [weak self] id, caller, completion in
+        self?.prepareIncomingReport(id: id, caller: caller, completion: completion)
+    }, updateCaller: { [weak self] id, caller in
+        self?.updateCaller(id: id, caller: caller, direct: false)
     }, join: { [weak self] invitation, pairing in
         self?.joinIncoming(invitation, pairing: pairing)
     }, end: { [weak self] id in
@@ -154,8 +157,8 @@ final class BridgeModel: ObservableObject {
         incoming.receive(invitation, completion: completion)
     }
 
-    private func prepareIncomingReport(id: UUID, completion: @escaping (Bool) -> Void) {
-        if systemCallID == id { completion(true); return }
+    private func prepareIncomingReport(id: UUID, caller: CallerIdentity, completion: @escaping (Bool) -> Void) {
+        if systemCallID == id { updateCaller(id: id, caller: caller, direct: false); completion(true); return }
         guard systemCallID == nil, !connected || stage == .idle else { completion(false); return }
         if !connected {
             sessionID = id
@@ -170,7 +173,14 @@ final class BridgeModel: ObservableObject {
         systemCallID = id
         joiningIncoming = true
         status = "收到来电，正在连接本次原通话。"
-        systemCall.reportIncoming(id: id, simulated: false, completion: completion)
+        updateCaller(id: id, caller: caller, direct: false)
+        systemCall.reportIncoming(id: id, simulated: false, caller: callerIdentity.caller, completion: completion)
+    }
+
+    private func updateCaller(id: UUID, caller: CallerIdentity, direct: Bool) {
+        guard systemCallID == nil || systemCallID == id else { return }
+        callerIdentity.update(callID: id, caller: caller, direct: direct)
+        systemCall.updateCaller(id: id, caller: callerIdentity.caller)
     }
 
     private func joinIncoming(_ invitation: CallInvitation, pairing: StoredPairing) {
@@ -335,7 +345,8 @@ final class BridgeModel: ObservableObject {
     private func reportSystemIncomingCall(id: UUID) {
         guard systemCallID == nil else { return }
         systemCallID = id
-        systemCall.reportIncoming(id: id, simulated: simulatedTest || networkSimulation) { [weak self] succeeded in
+        let caller = callerIdentity.callID == id ? callerIdentity.caller : CallerIdentity()
+        systemCall.reportIncoming(id: id, simulated: simulatedTest || networkSimulation, caller: caller) { [weak self] succeeded in
             guard let self, self.systemCallID == id else { return }
             self.diagnostic("callkit_incoming_reported success=\(succeeded)")
             guard succeeded else {
@@ -406,6 +417,7 @@ final class BridgeModel: ObservableObject {
         answerRequested = false
         joiningIncoming = false
         remoteCallID = nil
+        callerIdentity = CallIdentityState()
         connectionPairingID = nil
         if let endedCallID { incoming.finish(callID: endedCallID, reportEnd: false) }
         status = message
@@ -481,6 +493,9 @@ final class BridgeModel: ObservableObject {
         case .callID(let callID):
             guard systemCallID == nil || systemCallID == callID else { disconnect(); return }
             remoteCallID = callID
+        case .callerIdentity(let update):
+            guard remoteCallID == update.callID || systemCallID == update.callID else { disconnect(); return }
+            updateCaller(id: update.callID, caller: update.caller, direct: true)
         case .diagnostic(let event, let domain, let code):
             recordDiagnostic(event, domain: domain, code: code)
         case .networkPath(let path):

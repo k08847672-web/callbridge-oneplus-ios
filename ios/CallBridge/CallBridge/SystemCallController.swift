@@ -20,22 +20,21 @@ final class SystemCallController: NSObject, @preconcurrency CXProviderDelegate {
         let configuration = CXProviderConfiguration()
         configuration.maximumCallGroups = 1
         configuration.maximumCallsPerCallGroup = 1
-        configuration.supportedHandleTypes = [.generic]
-        configuration.includesCallsInRecents = false
+        configuration.supportedHandleTypes = [.generic, .phoneNumber]
+        configuration.includesCallsInRecents = true
         provider = CXProvider(configuration: configuration)
         super.init()
         provider.setDelegate(self, queue: .main)
     }
 
-    func reportIncoming(id: UUID, simulated: Bool, completion: @escaping (Bool) -> Void) {
-        if callID == id { completion(true); return }
+    func reportIncoming(id: UUID, simulated: Bool, caller: CallerIdentity = CallerIdentity(),
+                        completion: @escaping (Bool) -> Void) {
+        if callID == id { updateCaller(id: id, caller: caller); completion(true); return }
         guard callID == nil else { completion(false); return }
         callID = id
         answered = false
         answerTransactionPending = false
-        let update = CXCallUpdate()
-        update.remoteHandle = CXHandle(type: .generic, value: simulated ? "合成音测试" : "一加通话桥")
-        update.localizedCallerName = simulated ? "合成音测试 · 不拨号" : "一加来电 · 通话桥"
+        let update = callerUpdate(simulated: simulated, caller: caller)
         update.supportsHolding = false
         update.supportsGrouping = false
         update.supportsUngrouping = false
@@ -51,6 +50,24 @@ final class SystemCallController: NSObject, @preconcurrency CXProviderDelegate {
                 completion(error == nil)
             }
         }
+    }
+
+    func updateCaller(id: UUID, caller: CallerIdentity) {
+        guard callID == id else { return }
+        provider.reportCall(with: id, updated: callerUpdate(simulated: false, caller: caller))
+    }
+
+    private func callerUpdate(simulated: Bool, caller: CallerIdentity) -> CXCallUpdate {
+        let update = CXCallUpdate()
+        if simulated {
+            update.remoteHandle = CXHandle(type: .generic, value: "合成音测试")
+            update.localizedCallerName = "合成音测试 · 不拨号"
+        } else {
+            update.remoteHandle = caller.number.map { CXHandle(type: .phoneNumber, value: $0) }
+                ?? CXHandle(type: .generic, value: caller.displayName)
+            update.localizedCallerName = caller.displayName
+        }
+        return update
     }
 
     func requestAnswer(id: UUID) {

@@ -37,7 +37,7 @@ struct PushJoinSelfTests {
         coordinator = IncomingCallCoordinator(loadPairing: { id in
             guard id == pairing.pairingID else { throw IncomingCallError.missingPairing }
             return pairing
-        }, reportIncoming: { id, completion in
+        }, reportIncoming: { id, _, completion in
             reported.append(id)
             events.append("report")
             coordinator.requestAnswer(callID: id, deadline: Date().addingTimeInterval(10)) { ready in

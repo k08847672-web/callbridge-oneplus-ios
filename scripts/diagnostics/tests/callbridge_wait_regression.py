@@ -26,7 +26,7 @@ public class WaitFixture {
  static Thread daemon(String name,Runnable job){return null;}
  static final List<String> logs=new ArrayList<>();static void emit(String stage,Object...fields){logs.add(stage+Arrays.toString(fields));}
  static class OwnedCallFailure extends IOException{final String reason;OwnedCallFailure(String reason,Throwable cause){super(reason,cause);this.reason=reason;}}
- static class OwnedCall{int state=1;final String callId="00000000-0000-4000-8000-000000000001";boolean closed;
+ static class OwnedCall{int state=1;final Object caller=new Object();final String callId="00000000-0000-4000-8000-000000000001";boolean closed;
   OwnedCall(Object context)throws OwnedCallFailure{attempts++;if(!available)throw new OwnedCallFailure("helper_connect_unavailable",new IOException("connect failed ECONNREFUSED private_sentinel"));}
   void observeBeforeAnswer(){}void close(){closed=true;state=0;}boolean active(){return state==2;}void answer(){answers++;}}
  static class AudioManager{static final int MODE_NORMAL=0,MODE_IN_CALL=2;int mode;int getMode(){return mode;}}
@@ -36,7 +36,7 @@ public class WaitFixture {
  static class Frame{Frame(int type,int sequence,byte[]payload){}}
  static class Protocol{static final int HEARTBEAT=64,JOIN=51,STATE=32;}
  static class Incoming{boolean answered;String callId;void ring(String id){callId=id;}byte[]idBytes(){return new byte[36];}boolean answer(){if(answered)return false;answered=true;return true;}boolean end(){return callId!=null;}}
- static class Pushes{int ringing,ended;void publish(String id,int revision,String state){if(revision==1)ringing++;else ended++;}void close(){}}
+ static class Pushes{int ringing,ended;void publish(String id,int revision,String state){if(revision==1)ringing++;else ended++;}void publish(String id,int revision,String state,Object caller){publish(id,revision,state);}void close(){}}
  static class Queue{void control(Frame frame){}void close(){}}
  static class Settings{void compare(AudioManager audio){}}
  static class Recovery{boolean ended;}
@@ -45,7 +45,7 @@ public class WaitFixture {
  final AtomicBoolean stopped=new AtomicBoolean(),answerRequested=new AtomicBoolean(),transportLost=new AtomicBoolean();final AtomicInteger state=new AtomicInteger();
  final Object transportLock=new Object();final byte[]sessionToken=new byte[32];final Incoming incoming=new Incoming();final Pushes pushes=new Pushes();final Queue outbound=new Queue(),inbound=new Queue();final Recovery recovery=new Recovery();final Settings initialSettings=new Settings();
  final ServerSocket listener;OwnedCall ownedCall;Socket socket,authenticatingResume,pendingResume;FutureTask<Boolean>flagCheck;Thread reader,writer,flagThread,resumeAcceptor;boolean ringSeen,answerAttempted;String phase,stopReason="not_started";
- Session(ServerSocket listener){this.listener=listener;}void acceptResumes(){}void live(){audioStarts++;}void releaseAudio(){}void levels(String stage){}
+ Session(ServerSocket listener){this.listener=listener;}void acceptResumes(){}void live(){audioStarts++;}void releaseAudio(){}void levels(String stage){}void sendCallerIdentity(){}
  void stop(String reason){stopReason=reason;stopped.set(true);}void finishRemoteCall(String reason){if(ringSeen)pushes.publish(incoming.callId,2,"ended");stop(reason);}
 '''
 tests = r'''

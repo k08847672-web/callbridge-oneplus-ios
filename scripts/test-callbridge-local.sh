@@ -22,6 +22,8 @@ xcrun --sdk macosx swiftc "$CALLBRIDGE_SWIFT/FrameProtocol.swift" "$CALLBRIDGE_S
   -o "$CALLBRIDGE_TEST_BUILD/incoming-tests"
 xcrun --sdk macosx swiftc -D DEBUG "$CALLBRIDGE_SWIFT/FrameProtocol.swift" "$CALLBRIDGE_SWIFT/BridgeClient.swift" \
   "$CALLBRIDGE_TESTS/JoinClientSelfTests.swift" -o "$CALLBRIDGE_TEST_BUILD/join-client"
+xcrun --sdk macosx swiftc -D DEBUG "$CALLBRIDGE_SWIFT/FrameProtocol.swift" "$CALLBRIDGE_SWIFT/BridgeClient.swift" \
+  "$CALLBRIDGE_TESTS/CallerIdentityClientSelfTests.swift" -o "$CALLBRIDGE_TEST_BUILD/caller-identity-client"
 xcrun --sdk macosx swiftc -D DEBUG "$CALLBRIDGE_SWIFT/FrameProtocol.swift" "$CALLBRIDGE_SWIFT/PairingStore.swift" \
   "$CALLBRIDGE_SWIFT/IncomingCallCoordinator.swift" "$CALLBRIDGE_SWIFT/BridgeClient.swift" \
   "$CALLBRIDGE_TESTS/PushJoinSelfTests.swift" -o "$CALLBRIDGE_TEST_BUILD/push-join-client"
@@ -34,6 +36,7 @@ if [ "${1:-}" = "--check" ]; then
 fi
 "$JAVA_HOME/bin/java" -cp "$CALLBRIDGE_CP" com.doitio.diagnostics.TelephonyNetworkBridge self-test
 "$CALLBRIDGE_TEST_BUILD/incoming-tests"
+"$CALLBRIDGE_TEST_BUILD/caller-identity-client"
 "$CALLBRIDGE_PYTHON" "$CALLBRIDGE_ROOT/scripts/diagnostics/tests/callbridge_local.py" \
   "$CALLBRIDGE_TEST_BUILD" "$CALLBRIDGE_CP" "$CALLBRIDGE_NODE"
 "$CALLBRIDGE_PYTHON" "$CALLBRIDGE_ROOT/scripts/diagnostics/tests/callbridge_transport_regression.py" "$CALLBRIDGE_TEST_BUILD"

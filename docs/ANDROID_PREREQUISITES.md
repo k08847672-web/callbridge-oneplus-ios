@@ -22,7 +22,9 @@
 
 ## helper
 
-`com.doitio.callbridgehelper` 需要安装，并已允许 `MANAGE_ONGOING_CALLS` 对应 app-op。其 InCallService 由系统 `BIND_INCALL_SERVICE` 权限保护；本地 socket 仅接受 shell UID。helper 持有并控制本次由桥接接听的原 Call，默认拨号器不变。
+`com.doitio.callbridgehelper` 需要安装，并已允许 `MANAGE_ONGOING_CALLS` 对应 app-op。其 InCallService 由系统 `BIND_INCALL_SERVICE` 权限保护；控制入口通过 `getContentProviderExternal → Binder` 连接，Provider 受 `DUMP` 保护，Provider 和每次 Binder transaction 都核验实际 shell UID 2000。shell 使用系统已有的 `DUMP` / `ACCESS_CONTENT_PROVIDERS_EXTERNALLY` 授权。helper 持有并控制本次由桥接接听的原 Call，默认拨号器不变。
+
+helper 新增 `READ_CONTACTS` 用于本机匹配联系人姓名；未授权或未匹配时，仍可使用 Telecom 允许显示的网络姓名或号码，不阻塞通话。姓名和号码只对应本次原 Call；系统隐藏或限制显示的身份不向 iPhone 发布。
 
 公开 helper 构建默认生成已对齐的未签名 APK，不读取个人 keystore。安装使用自己的本地签名材料；显式设置 `CALLBRIDGE_KEYSTORE`、`CALLBRIDGE_KEY_ALIAS`、`CALLBRIDGE_KS_PASSWORD`、`CALLBRIDGE_KEY_PASSWORD` 后，构建脚本通过环境变量给签名工具提供密码。不同签名不能直接覆盖已有相同 package 的安装；在现有设备上更换签名或卸载前，应先判断其数据和授权影响。
 

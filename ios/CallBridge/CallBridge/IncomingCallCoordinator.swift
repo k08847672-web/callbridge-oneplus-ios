@@ -3,6 +3,7 @@ import Foundation
 struct CallInvitation: Equatable {
     let pairingID: UUID
     let callID: UUID
+    let caller: CallerIdentity
 
     init(payload: [AnyHashable: Any]) throws {
         guard let pairing = payload["pairing_id"] as? String,
@@ -12,9 +13,16 @@ struct CallInvitation: Equatable {
               payload["state"] as? String == "ringing" else { throw IncomingCallError.invalidInvitation }
         self.pairingID = pairingID
         self.callID = callID
+        caller = CallerIdentity(fields: payload)
     }
 
-    init(pairingID: UUID, callID: UUID) { self.pairingID = pairingID; self.callID = callID }
+    init(pairingID: UUID, callID: UUID, caller: CallerIdentity = CallerIdentity()) {
+        self.pairingID = pairingID; self.callID = callID; self.caller = caller
+    }
+
+    func isSameCall(as other: CallInvitation) -> Bool {
+        pairingID == other.pairingID && callID == other.callID
+    }
 
     static func canonicalUUID(_ value: String) -> UUID? {
         guard value.utf8.count == 36, let id = UUID(uuidString: value),
@@ -30,7 +38,8 @@ enum IncomingCallError: Error { case invalidInvitation, missingPairing }
 @MainActor
 final class IncomingCallCoordinator {
     var loadPairing: (UUID) throws -> StoredPairing
-    var reportIncoming: (UUID, @escaping (Bool) -> Void) -> Void
+    var reportIncoming: (UUID, CallerIdentity, @escaping (Bool) -> Void) -> Void
+    var updateCaller: (UUID, CallerIdentity) -> Void
     var join: (CallInvitation, StoredPairing) -> Void
     var end: (UUID) -> Void
     var now: () -> Date
@@ -43,7 +52,8 @@ final class IncomingCallCoordinator {
     private var answerAccepted = false
 
     init(loadPairing: @escaping (UUID) throws -> StoredPairing,
-         reportIncoming: @escaping (UUID, @escaping (Bool) -> Void) -> Void,
+         reportIncoming: @escaping (UUID, CallerIdentity, @escaping (Bool) -> Void) -> Void,
+         updateCaller: @escaping (UUID, CallerIdentity) -> Void = { _, _ in },
          join: @escaping (CallInvitation, StoredPairing) -> Void,
          end: @escaping (UUID) -> Void,
          now: @escaping () -> Date = Date.init,
@@ -51,26 +61,34 @@ final class IncomingCallCoordinator {
              DispatchQueue.main.asyncAfter(deadline: .now() + max(0, date.timeIntervalSinceNow), execute: work)
          }) {
         self.loadPairing = loadPairing; self.reportIncoming = reportIncoming
+        self.updateCaller = updateCaller
         self.join = join; self.end = end; self.now = now; self.schedule = schedule
     }
 
     func receive(_ invitation: CallInvitation, completion: @escaping () -> Void) {
         // Reuse the UUID already reported for this call. A duplicate never starts a new
         // transport, answer action or audio engine.
-        if current == invitation { completion(); return }
+        if let current, current.isSameCall(as: invitation) {
+            if current.caller != invitation.caller {
+                self.current = invitation
+                updateCaller(invitation.callID, invitation.caller)
+            }
+            completion()
+            return
+        }
         guard current == nil else { completion(); return }
         let pairing = try? loadPairing(invitation.pairingID)
         current = invitation
         joined = false
         answerAccepted = false
-        reportIncoming(invitation.callID) { [weak self] success in
+        reportIncoming(invitation.callID, invitation.caller) { [weak self] success in
             completion() // PushKit completion follows the report attempt, never JOIN/network.
-            guard let self, self.current == invitation else { return }
+            guard let self, let current = self.current, current.isSameCall(as: invitation) else { return }
             guard success, let pairing, self.lastEnded != invitation.callID else {
                 self.finish(callID: invitation.callID)
                 return
             }
-            self.join(invitation, pairing)
+            self.join(current, pairing)
         }
     }
 

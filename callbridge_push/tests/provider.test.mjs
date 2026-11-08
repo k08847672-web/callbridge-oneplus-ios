@@ -102,6 +102,56 @@ test('one ringing push, repeated revisions and ended tombstone use the same API'
   assert.equal(deliveries.length, 1, 'ended never pushes, and a terminal Call never rings again');
 });
 
+test('optional caller identity is normalized, delivered once, and absent from state and diagnostics', async (t) => {
+  const logs = [];
+  t.mock.method(console, 'log', (line) => logs.push(JSON.parse(line)));
+  const deliveries = [];
+  const callerName = '虚构 "张\\三"';
+  const callerNumber = '+1 (202) 555-0142';
+  const f = await fixture(t, { pushSender: async (message) => {
+    deliveries.push(message);
+    const state = await readFile(f.config.state_file, 'utf8');
+    assert.equal(state.includes('caller_name'), false);
+    assert.equal(state.includes('caller_number'), false);
+    assert.equal(state.includes('虚构'), false);
+    assert.equal(state.includes(callerNumber), false);
+  } });
+  await f.post('/v1/register', registration());
+  const identity = {
+    caller_name: ' \u0000' + callerName + '\n\u007f ', caller_number: '\t ' + callerNumber + '\r\n ',
+  };
+  assert.equal((await f.post('/v1/calls', event(identity))).status, 200);
+  assert.deepEqual(deliveries[0].payload, {
+    ...voipPayload(event()), caller_name: callerName, caller_number: callerNumber,
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(deliveries[0].payload)), deliveries[0].payload);
+  assert.equal((await f.post('/v1/calls', event(identity))).body.duplicate, true);
+  assert.equal((await f.post('/v1/calls', event({ revision: 2, caller_name: '迟到的虚构姓名' }))).body.duplicate, true);
+  assert.equal((await f.post('/v1/calls', event({ ...identity, revision: 3, state: 'ended' }))).status, 200);
+  assert.equal(deliveries.length, 1, 'identity changes and ended events do not produce another push');
+  const persisted = JSON.parse(await readFile(f.config.state_file, 'utf8'));
+  assert.deepEqual(Object.keys(persisted.calls[0]).sort(),
+    ['call_id', 'notification_attempted', 'pairing_id', 'revision', 'state']);
+  for (const material of [JSON.stringify(persisted), JSON.stringify(logs), JSON.stringify(f.config)]) {
+    assert.equal(material.includes('caller_name'), false);
+    assert.equal(material.includes('caller_number'), false);
+    assert.equal(material.includes('虚构'), false);
+    assert.equal(material.includes(callerNumber), false);
+  }
+});
+
+test('missing, empty or non-string caller identity preserves the original payload', () => {
+  const original = { aps: {}, pairing_id: PAIR, call_id: CALL, revision: 1, state: 'ringing' };
+  for (const fields of [
+    {}, { caller_name: null, caller_number: 42 },
+    { caller_name: {}, caller_number: [] },
+    { caller_name: ' \u0000\n\u007f ', caller_number: '\t\r ' },
+  ]) assert.deepEqual(voipPayload(event(fields)), original);
+  assert.deepEqual(voipPayload(event({ caller_name: '虚构姓名' })), { ...original, caller_name: '虚构姓名' });
+  assert.deepEqual(voipPayload(event({ caller_number: '+1 (202) 555-0142' })),
+    { ...original, caller_number: '+1 (202) 555-0142' });
+});
+
 test('ended before ringing stays terminal, and a new Call can independently ring', async (t) => {
   const deliveries = [];
   const f = await fixture(t, { pushSender: async (message) => deliveries.push(message) });
@@ -195,9 +245,10 @@ test('real HTTP/2 sender writes the assembled request to a local synthetic APNs 
   t.after(() => new Promise((accept) => peer.close(accept)));
   const address = peer.address();
   let selectedOrigin;
+  const payload = voipPayload(event({ caller_name: '虚构 "李\\四"', caller_number: '+1 (202) 555-0142' }));
   await sendApnsPush({
     apns: { key_id: 'FIXTUREKEY', team_id: 'FIXTURETEAM', topic: 'example.callbridge.voip', privateKey },
-    registration: registration({ environment: 'production' }), payload: voipPayload(event()),
+    registration: registration({ environment: 'production' }), payload,
   }, { connect: (origin) => {
     selectedOrigin = origin;
     return http2.connect(`http://127.0.0.1:${address.port}`);
@@ -205,7 +256,7 @@ test('real HTTP/2 sender writes the assembled request to a local synthetic APNs 
   assert.equal(selectedOrigin, 'https://api.push.apple.com');
   assert.equal(received.length, 1);
   assert.equal(received[0].headers['apns-push-type'], 'voip');
-  assert.deepEqual(received[0].payload, voipPayload(event()));
+  assert.deepEqual(received[0].payload, payload);
   assert.deepEqual(logs, [{ stage: 'apns_result', http_status: 200, reason: null }]);
 });
 

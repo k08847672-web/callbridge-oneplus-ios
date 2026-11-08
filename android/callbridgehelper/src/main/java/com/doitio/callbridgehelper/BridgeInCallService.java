@@ -7,6 +7,7 @@ import android.os.Looper;
 import android.os.RemoteException;
 import android.telecom.Call;
 import android.telecom.InCallService;
+import android.telecom.TelecomManager;
 import android.telecom.VideoProfile;
 import java.util.IdentityHashMap;
 import java.util.NoSuchElementException;
@@ -55,7 +56,7 @@ public final class BridgeInCallService extends InCallService {
         if (owned == null || !owned.owner.equals(owner)) return Snapshot.NONE;
         if (code == CallBridgeControl.ANSWER) owned.answer();
         else if (code == CallBridgeControl.DISCONNECT) owned.disconnect();
-        return new Snapshot(owned.callId, owned.state());
+        return owned.snapshot();
     }
 
     private Call eligibleRinging() {
@@ -81,7 +82,11 @@ public final class BridgeInCallService extends InCallService {
         static final Snapshot NONE = new Snapshot(null, 0);
         final String callId;
         final int state;
-        Snapshot(String callId, int state) { this.callId = callId; this.state = state; }
+        final String callerName, callerNumber;
+        Snapshot(String callId, int state) { this(callId, state, null, null); }
+        Snapshot(String callId, int state, String name, String number) {
+            this.callId = callId; this.state = state; callerName = name; callerNumber = number;
+        }
     }
 
     private final class Claim {
@@ -104,6 +109,19 @@ public final class BridgeInCallService extends InCallService {
             // A sent ANSWER can remain ringing until Telecom reports ACTIVE. No second ANSWER is allowed.
             return state == Call.STATE_RINGING ? 1 : state == Call.STATE_ACTIVE && answerSent ? 2 : 0;
         }
+        Snapshot snapshot() {
+            int value = state();
+            if (value == 0) return new Snapshot(callId, 0);
+            // Telecom performs the contact lookup and applies READ_CONTACTS. Never query contacts here.
+            Call.Details details = call.getDetails();
+            boolean numberAllowed = details.getHandlePresentation() == TelecomManager.PRESENTATION_ALLOWED;
+            String name = numberAllowed ? clean(details.getContactDisplayName()) : null;
+            if (name == null && details.getCallerDisplayNamePresentation() == TelecomManager.PRESENTATION_ALLOWED)
+                name = clean(details.getCallerDisplayName());
+            String number = numberAllowed && details.getHandle() != null && "tel".equals(details.getHandle().getScheme())
+                    ? clean(details.getHandle().getSchemeSpecificPart()) : null;
+            return new Snapshot(callId, value, name, number);
+        }
         void answer() {
             if (answerSent || disconnectSent || !getCalls().contains(call) || call.getState() != Call.STATE_RINGING) return;
             answerSent = true;
@@ -114,5 +132,16 @@ public final class BridgeInCallService extends InCallService {
             disconnectSent = true;
             call.disconnect();
         }
+    }
+
+    private static String clean(String value) {
+        if (value == null) return null;
+        StringBuilder text = new StringBuilder();
+        for (int index = 0; index < value.length(); index++) {
+            char character = value.charAt(index);
+            if (character >= 0x20 && character != 0x7f) text.append(character);
+        }
+        String result = text.toString().trim();
+        return result.isEmpty() ? null : result;
     }
 }

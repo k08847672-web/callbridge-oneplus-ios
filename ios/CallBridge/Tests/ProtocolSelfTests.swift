@@ -52,6 +52,15 @@ struct ProtocolSelfTests {
         try rejects("simulation marker length") {
             try PJZCallProtocol.validateServerFrame(BridgeFrame(type: PJZCallProtocol.simulation, payload: Data([1])))
         }
+        let callID = UUID(uuidString: "00000000-0000-4000-8000-000000000001")!
+        let identity = try JSONSerialization.data(withJSONObject: ["call_id": callID.uuidString.lowercased(),
+            "caller_name": "合成联系人", "caller_number": "+12025550100"])
+        try PJZCallProtocol.validateServerFrame(BridgeFrame(type: PJZCallProtocol.callerIdentity, payload: identity))
+        let decodedIdentity = try CallIdentityUpdate(payload: identity)
+        try check(PJZCallProtocol.callerIdentity == 0x22 && decodedIdentity.callID == callID
+                  && decodedIdentity.caller.name == "合成联系人", "identity frame contract")
+        try rejects("identity cannot omit call ID") { _ = try CallIdentityUpdate(payload: Data("{}".utf8)) }
+        try rejects("identity retains 1024 byte limit") { _ = try CallIdentityUpdate(payload: Data(repeating: 0, count: 1025)) }
         try check(try PJZCallProtocol.validateEndpoint("100.64.0.1", port: 47631) == "100.64.0.1", "lower Tailscale boundary")
         try check(try PJZCallProtocol.validateEndpoint("100.127.255.254", port: 1) == "100.127.255.254", "upper Tailscale boundary")
         for rejected in ["100.63.255.255", "100.128.0.1", "192.168.1.1", "example.com", "0100.64.0.1", "100.64.0.256", "100.64.0"] {
@@ -71,6 +80,10 @@ struct ProtocolSelfTests {
                                                         using: SymmetricKey(data: pairingFixture))
         try check(pairingTag.map { String(format: "%02x", $0) }.joined()
                   == "4d5e886a5c05ab83e912801e2c699d055caa6947e419a007cbebe00f66f1847e", "PJZ label cross-language fixture")
+        let capabilityMessage = PJZCallProtocol.name + challengeFixture + Data([PJZCallProtocol.callerIdentityCapability])
+        let capabilityTag = Data(HMAC<SHA256>.authenticationCode(for: capabilityMessage, using: SymmetricKey(data: pairingFixture)))
+        try check(capabilityTag != Data(pairingTag) && capabilityTag.count == 32 && PJZCallProtocol.callerIdentityCapability == 1,
+                  "caller capability is authenticated and legacy authentication is unchanged")
         try check(PJZCallProtocol.pcmLevel(Data(repeating: 0, count: 640)) == 0, "silence level")
         var negativeFullScale = Data()
         for _ in 0..<320 { negativeFullScale.append(contentsOf: [0, 128]) }

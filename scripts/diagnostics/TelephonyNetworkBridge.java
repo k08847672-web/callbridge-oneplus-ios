@@ -47,6 +47,7 @@ import java.security.SecureRandom;
 import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.EnumSet;
+import java.util.Objects;
 import java.util.Properties;
 import java.util.Set;
 import java.util.UUID;
@@ -296,6 +297,39 @@ public final class TelephonyNetworkBridge {
         return value;
     }
 
+    /** Only the currently owned Call's display identity. Never written to diagnostics or storage. */
+    static final class CallerIdentity {
+        static final CallerIdentity EMPTY = new CallerIdentity(null, null);
+        final String name, number;
+        CallerIdentity(String name, String number) { this.name = clean(name); this.number = clean(number); }
+        private static String clean(String value) {
+            if (value == null) return null;
+            StringBuilder text = new StringBuilder();
+            for (int index = 0; index < value.length(); index++) {
+                char character = value.charAt(index);
+                if (character >= 0x20 && character != 0x7f) text.append(character);
+            }
+            String result = text.toString().trim();
+            return result.isEmpty() ? null : result;
+        }
+        static String quote(String value) { return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""; }
+        String fields() {
+            return (name == null ? "" : ",\"caller_name\":" + quote(name))
+                    + (number == null ? "" : ",\"caller_number\":" + quote(number));
+        }
+        byte[] payload(String id) {
+            String prefix = "{\"call_id\":" + quote(canonicalId(id));
+            byte[] result = (prefix + fields() + "}").getBytes(StandardCharsets.UTF_8);
+            // The existing transport limit still applies; an oversized label must not break a call.
+            if (result.length > 1024) result = (prefix + new CallerIdentity(null, number).fields() + "}").getBytes(StandardCharsets.UTF_8);
+            if (result.length > 1024) result = (prefix + "}").getBytes(StandardCharsets.UTF_8);
+            return result;
+        }
+        boolean same(CallerIdentity other) {
+            return other != null && Objects.equals(name, other.name) && Objects.equals(number, other.number);
+        }
+    }
+
     /** Actual Call state, not push delivery expiry, determines whether a JOIN can still answer. */
     static final class IncomingLifecycle {
         volatile String callId;
@@ -321,13 +355,16 @@ public final class TelephonyNetworkBridge {
         final DataInputStream input;
         final DataOutputStream output;
         final String requestedId;
-        final boolean accepted;
+        final boolean accepted, callerIdentitySupported;
         final long nextInput, nextOutput;
-        Admission(DataInputStream input, DataOutputStream output, String requestedId, boolean accepted, long rx, long tx) {
+        Admission(DataInputStream input, DataOutputStream output, String requestedId, boolean accepted, boolean identity, long rx, long tx) {
             this.input = input; this.output = output; this.requestedId = requestedId;
-            this.accepted = accepted; nextInput = rx; nextOutput = tx;
+            this.accepted = accepted; callerIdentitySupported = identity; nextInput = rx; nextOutput = tx;
         }
         static Admission initial(Socket candidate, byte[] key, byte[] token, Supplier<String> joinable) throws Exception {
+            return initial(candidate, key, token, joinable, () -> null);
+        }
+        static Admission initial(Socket candidate, byte[] key, byte[] token, Supplier<String> joinable, Supplier<byte[]> identity) throws Exception {
             candidate.setTcpNoDelay(true);
             candidate.setSoTimeout(5000);
             DataInputStream input = new DataInputStream(candidate.getInputStream());
@@ -338,7 +375,8 @@ public final class TelephonyNetworkBridge {
             try {
                 Protocol.write(output, new Frame(Protocol.CHALLENGE, 0, challenge));
                 auth = Protocol.read(input, 0);
-                expected = Protocol.auth(key, challenge);
+                boolean callerIdentitySupported = auth.payload.length == 33;
+                expected = Protocol.auth(key, challenge, callerIdentitySupported);
                 if (auth.type != Protocol.AUTH || !MessageDigest.isEqual(expected, auth.payload))
                     throw new SecurityException("authentication_failed");
                 // Existing foreground clients wait for SESSION after AUTH. Wake clients send JOIN immediately.
@@ -355,17 +393,20 @@ public final class TelephonyNetworkBridge {
                     Protocol.write(output, new Frame(Protocol.JOIN, 1, request.payload));
                     if (!id.equals(joinable.get())) {
                         Protocol.write(output, new Frame(Protocol.STATE, 2, new byte[]{0}));
-                        return new Admission(input, output, id, false, 2, 3);
+                        return new Admission(input, output, id, false, callerIdentitySupported, 2, 3);
                     }
                     Protocol.write(output, new Frame(Protocol.SESSION, 2, token));
-                    Protocol.write(output, new Frame(Protocol.STATE, 3, new byte[]{1}));
+                    long next = 3;
+                    byte[] caller = callerIdentitySupported ? identity.get() : null;
+                    if (caller != null) Protocol.write(output, new Frame(Protocol.CALLER, next++, caller));
+                    Protocol.write(output, new Frame(Protocol.STATE, next++, new byte[]{1}));
                     candidate.setSoTimeout(0);
-                    return new Admission(input, output, id, true, 2, 4);
+                    return new Admission(input, output, id, true, callerIdentitySupported, 2, next);
                 }
                 Protocol.write(output, new Frame(Protocol.SESSION, 1, token));
                 Protocol.write(output, new Frame(Protocol.STATE, 2, new byte[]{0}));
                 candidate.setSoTimeout(0);
-                return new Admission(input, output, null, true, 1, 3);
+                return new Admission(input, output, null, true, callerIdentitySupported, 1, 3);
             } finally {
                 Arrays.fill(challenge, (byte) 0);
                 if (expected != null) Arrays.fill(expected, (byte) 0);
@@ -385,7 +426,7 @@ public final class TelephonyNetworkBridge {
         return url;
     }
 
-    /** Serial, bounded HTTP publisher. No contacts, numbers, audio, bridge key or session token leave here. */
+    /** Serial HTTP publisher. Only this Call's optional display name/number accompany its first ring. */
     private static final class PushEvents implements AutoCloseable {
         final Config config;
         final ArrayDeque<String> events = new ArrayDeque<>();
@@ -396,10 +437,14 @@ public final class TelephonyNetworkBridge {
             worker = config.providerUrl == null ? null : daemon("bridge-push-events", this::publishLoop);
         }
         synchronized void publish(String callId, int revision, String state) {
+            publish(callId, revision, state, CallerIdentity.EMPTY);
+        }
+        synchronized void publish(String callId, int revision, String state, CallerIdentity caller) {
             if (worker == null || closed) return;
             String stateValue = "ringing".equals(state) ? "ringing" : "ended";
             String event = "{\"pairing_id\":\"" + canonicalId(config.pairingId) + "\",\"call_id\":\""
-                    + canonicalId(callId) + "\",\"revision\":" + revision + ",\"state\":\"" + stateValue + "\"}";
+                    + canonicalId(callId) + "\",\"revision\":" + revision + ",\"state\":\"" + stateValue + "\""
+                    + ("ringing".equals(stateValue) ? caller.fields() : "") + "}";
             events.addLast(event); notifyAll();
         }
         void publishLoop() {
@@ -693,6 +738,7 @@ public final class TelephonyNetworkBridge {
         final AtomicBoolean closed = new AtomicBoolean();
         final int userId = Process.myUid() / 100000;
         volatile int state = -1;
+        volatile CallerIdentity caller = CallerIdentity.EMPTY;
         volatile IOException observationError;
         volatile IBinder control;
         Object activityManager;
@@ -718,6 +764,12 @@ public final class TelephonyNetworkBridge {
                 control = bootstrap == null ? null : bootstrap.getBinder(CallBridgeControl.BINDER_KEY);
                 if (control == null || !CallBridgeControl.DESCRIPTOR.equals(control.getInterfaceDescriptor()))
                     throw new OwnedCallFailure("helper_control_unavailable", null);
+                Parcel version = request(CallBridgeControl.PING);
+                try {
+                    if (version.readInt() != CallBridgeControl.VERSION)
+                        throw new OwnedCallFailure("helper_version_mismatch", null);
+                    checkedState(version.readInt());
+                } finally { version.recycle(); }
                 phase = "helper_binder_claim_failed";
                 Parcel reply = request(CallBridgeControl.CLAIM);
                 try {
@@ -725,6 +777,7 @@ public final class TelephonyNetworkBridge {
                     int value = reply.readInt();
                     if (id == null) throw new OwnedCallFailure("helper_no_ringing_call", null);
                     callId = canonicalId(id);
+                    caller = new CallerIdentity(reply.readString(), reply.readString());
                     state = checkedState(value);
                     initialState.countDown();
                 } finally { reply.recycle(); }
@@ -766,7 +819,11 @@ public final class TelephonyNetworkBridge {
         }
         private int command(int code) throws IOException {
             Parcel reply = request(code);
-            try { return checkedState(reply.readInt()); }
+            try {
+                int value = checkedState(reply.readInt());
+                if (code == CallBridgeControl.STATE) caller = new CallerIdentity(reply.readString(), reply.readString());
+                return value;
+            }
             finally { reply.recycle(); }
         }
         void observeBeforeAnswer() throws Exception {
@@ -784,6 +841,7 @@ public final class TelephonyNetworkBridge {
         @Override public void close() {
             if (!closed.compareAndSet(false, true)) return;
             state = 0;
+            caller = CallerIdentity.EMPTY;
             try { if (control != null) command(CallBridgeControl.RELEASE); } catch (IOException ignored) { }
             if (providerAcquired) {
                 providerAcquired = false;
@@ -822,7 +880,7 @@ public final class TelephonyNetworkBridge {
         volatile String phase = "listen";
         volatile String endingReason;
         volatile Socket socket;
-        OwnedCall ownedCall;
+        volatile OwnedCall ownedCall;
         ServerSocket listener;
         AudioRecord recorder;
         AudioTrack track;
@@ -831,6 +889,8 @@ public final class TelephonyNetworkBridge {
         Thread resumeAcceptor;
         volatile Socket pendingResume;
         volatile Socket authenticatingResume;
+        volatile boolean callerIdentitySupported, pendingResumeCallerIdentity;
+        CallerIdentity sentCaller;
         volatile long lastPeerFrame;
         FutureTask<Boolean> flagCheck;
         Thread flagThread;
@@ -894,12 +954,14 @@ public final class TelephonyNetworkBridge {
                             ringSeen = true; state.set(1);
                             if (socket != null && !transportLost.get()) {
                                 outbound.control(new Frame(Protocol.JOIN, 0, incoming.idBytes()));
+                                sendCallerIdentity();
                                 outbound.control(new Frame(Protocol.STATE, 0, new byte[]{1}));
                             }
                         }
-                        pushes.publish(observed.callId, 1, "ringing");
+                        pushes.publish(observed.callId, 1, "ringing", observed.caller);
                         emit("new_ringing_call", "answer_enabled", config.allowAnswer, "original_call_observer_ready", true);
                     }
+                    sendCallerIdentity();
                     if (answerRequested.getAndSet(false)) {
                         if (!config.allowAnswer || answerAttempted || state.get() != 1)
                             throw new SecurityException("answer_not_authorized_now");
@@ -932,7 +994,14 @@ public final class TelephonyNetworkBridge {
         }
 
         void attachInitial(Socket candidate) throws Exception {
-            Admission admitted = Admission.initial(candidate, config.key, sessionToken, this::joinableCall);
+            CallerIdentity[] handshakeCaller = {null};
+            Admission admitted = Admission.initial(candidate, config.key, sessionToken, this::joinableCall, () -> {
+                OwnedCall original = ownedCall;
+                if (original == null) return null;
+                CallerIdentity identity = original.caller;
+                handshakeCaller[0] = identity;
+                return identity.payload(original.callId);
+            });
             if (!admitted.accepted) return;
             synchronized (transportLock) {
                 // The original Call may finish while the handshake is in flight; ANSWER rechecks its object/state.
@@ -942,13 +1011,29 @@ public final class TelephonyNetworkBridge {
                 outbound.close(); inbound.close(); join(reader); join(writer);
                 outbound.reset(); inbound.reset();
                 socket = candidate; lastPeerFrame = now(); transportLost.set(false);
+                callerIdentitySupported = admitted.callerIdentitySupported;
+                sentCaller = handshakeCaller[0];
                 state.set(ringSeen ? 1 : 0);
                 if (admitted.requestedId == null && incoming.joinableId() != null) {
                     outbound.control(new Frame(Protocol.JOIN, 0, incoming.idBytes()));
+                    sendCallerIdentity();
                     outbound.control(new Frame(Protocol.STATE, 0, new byte[]{1}));
                 }
+                if (admitted.requestedId != null) sendCallerIdentity();
                 writer = daemon("bridge-network-writer", () -> writeLoop(admitted.output, candidate, admitted.nextOutput));
                 reader = daemon("bridge-network-reader", () -> readLoop(admitted.input, candidate, admitted.nextInput));
+            }
+        }
+
+        void sendCallerIdentity() throws IOException {
+            synchronized (transportLock) {
+                OwnedCall original = ownedCall;
+                if (!callerIdentitySupported || socket == null || transportLost.get() || original == null) return;
+                CallerIdentity identity = original.caller;
+                if (!identity.same(sentCaller)) {
+                    outbound.control(new Frame(Protocol.CALLER, 0, identity.payload(original.callId)));
+                    sentCaller = identity;
+                }
             }
         }
 
@@ -965,10 +1050,12 @@ public final class TelephonyNetworkBridge {
             new SecureRandom().nextBytes(challenge);
             Frame auth = null;
             byte[] expected = null;
+            boolean supportsCaller = false;
             try {
                 Protocol.write(output, new Frame(Protocol.CHALLENGE, 0, challenge));
                 auth = Protocol.read(input, 0);
-                expected = Protocol.auth(config.key, challenge);
+                supportsCaller = auth.payload.length == 33;
+                expected = Protocol.auth(config.key, challenge, supportsCaller);
                 if (auth.type != Protocol.AUTH || !MessageDigest.isEqual(expected, auth.payload))
                     throw new SecurityException("authentication_failed");
                 if (resume) {
@@ -984,24 +1071,35 @@ public final class TelephonyNetworkBridge {
                 if (auth != null) auth.clear();
                 if (expected != null) Arrays.fill(expected, (byte) 0);
             }
-            attachAuthenticated(candidate, resume);
+            attachAuthenticated(candidate, resume, supportsCaller);
         }
 
         void attachAuthenticated(Socket candidate, boolean resume) throws Exception {
+            attachAuthenticated(candidate, resume, false);
+        }
+
+        void attachAuthenticated(Socket candidate, boolean resume, boolean supportsCaller) throws Exception {
             if (!resume) requireIdle(audio, telecom);
             DataOutputStream output = new DataOutputStream(candidate.getOutputStream());
             DataInputStream input = new DataInputStream(candidate.getInputStream());
             candidate.setSoTimeout(0);
             Protocol.write(output, new Frame(Protocol.SESSION, 1, sessionToken));
-            Protocol.write(output, new Frame(Protocol.STATE, 2, new byte[]{(byte) (resume ? 2 : 0)}));
+            long sequence = 2;
+            CallerIdentity identity = ownedCall == null ? null : ownedCall.caller;
+            if (resume && supportsCaller && identity != null)
+                Protocol.write(output, new Frame(Protocol.CALLER, sequence++, identity.payload(ownedCall.callId)));
+            Protocol.write(output, new Frame(Protocol.STATE, sequence++, new byte[]{(byte) (resume ? 2 : 0)}));
             if (resume && !recovery.resumed(now())) throw new IOException("recovery_expired");
             socket = candidate;
+            callerIdentitySupported = supportsCaller;
+            sentCaller = resume && supportsCaller ? identity : null;
             lastPeerFrame = now();
             transportLost.set(false);
             outbound.reset(); inbound.reset();
             state.set(resume ? 2 : 0);
             emit(resume ? "session_resumed" : "authenticated", "audio_opened", resume, "state", resume ? "active" : "idle", "answer_repeated", false);
-            writer = daemon("bridge-network-writer", () -> writeLoop(output, candidate));
+            long nextSequence = sequence;
+            writer = daemon("bridge-network-writer", () -> writeLoop(output, candidate, nextSequence));
             reader = daemon("bridge-network-reader", () -> readLoop(input, candidate, resume ? 2 : 1));
         }
 
@@ -1021,11 +1119,12 @@ public final class TelephonyNetworkBridge {
                     if (!ownedActive() || state.get() != 2) throw new SecurityException("resume_only_owned_active_call");
                     long expiry = recovery.deadline == 0 ? now() + Recovery.WINDOW_MS : recovery.deadline;
                     candidate.setSoTimeout((int) Math.max(1, expiry - now()));
-                    Protocol.verifyResume(candidate, config.key, sessionToken);
+                    boolean supportsCaller = Protocol.verifyResume(candidate, config.key, sessionToken);
                     if (!ownedActive() || recovery.expired(now())) throw new SecurityException("original_call_no_longer_resumable");
                     Socket old = socket;
                     loseTransport(old, "authenticated_resume_takeover", new IOException());
                     if (!transportLost.get() || pendingResume != null) throw new IOException("resume_not_available");
+                    pendingResumeCallerIdentity = supportsCaller;
                     pendingResume = candidate;
                     candidate = null;
                     while (pendingResume != null && !stopped.get()) SystemClock.sleep(5);
@@ -1090,7 +1189,7 @@ public final class TelephonyNetworkBridge {
                 if (recovery.expired(now())) { endOwnedCall("recovery_expired"); return false; }
                 Socket candidate = pendingResume;
                 if (candidate != null) {
-                    try { attachAuthenticated(candidate, true); return true; }
+                    try { attachAuthenticated(candidate, true, pendingResumeCallerIdentity); return true; }
                     catch (Throwable error) {
                         failure("resume_attach_failed", error);
                         try { candidate.close(); } catch (IOException ignored) { }
@@ -1153,6 +1252,7 @@ public final class TelephonyNetworkBridge {
             try {
                 while (!stopped.get() && active(audio, telecom)) {
                     if (!ownedActive()) { finishRemoteCall("original_call_ended"); break; }
+                    sendCallerIdentity();
                     if (hangupRequested.get()) { endOwnedCall("explicit_hangup"); break; }
                     if (!transportLost.get() && now() - lastPeerFrame >= 4000) {
                         // Two missing 2-second peer heartbeats start the approved recovery
@@ -1443,7 +1543,7 @@ public final class TelephonyNetworkBridge {
     /** Pure JVM protocol implementation; no Android calls, sockets or audio in selfTest. */
     static final class Protocol {
         static final int CHALLENGE = 1, AUTH = 2, DOWN_PCM = 0x10, UP_PCM = 0x11,
-                STATE = 0x20, SESSION = 0x21, ANSWER = 0x30, RESUME = 0x31, HANGUP = 0x32, JOIN = 0x33,
+                STATE = 0x20, SESSION = 0x21, CALLER = 0x22, ANSWER = 0x30, RESUME = 0x31, HANGUP = 0x32, JOIN = 0x33,
                 HEARTBEAT = 0x40, SIMULATION = 0x50;
         static final byte[] LABEL = "PJZ-CALL/1".getBytes(StandardCharsets.UTF_8);
         static final byte[] SIMULATION_LABEL = "PJZ-SIMULATION/1".getBytes(StandardCharsets.UTF_8);
@@ -1475,13 +1575,16 @@ public final class TelephonyNetworkBridge {
             output.writeInt((int) frame.sequence); output.write(frame.payload); output.flush();
         }
         static void validateLength(int type, int length) throws IOException {
-            if (length > 1024 || !((type == CHALLENGE || type == AUTH || type == SESSION || type == RESUME || type == HANGUP) && length == 32
+            if (length > 1024 || !((type == CHALLENGE || type == SESSION || type == RESUME || type == HANGUP) && length == 32
+                    || type == AUTH && (length == 32 || length == 33) || type == CALLER && length > 0
                     || (type == DOWN_PCM || type == UP_PCM) && length == PCM_BYTES
                     || (type == STATE || type == ANSWER) && length == 1 || type == HEARTBEAT && length == 0
                     || type == JOIN && length == 36 || type == SIMULATION && length == SIMULATION_LABEL.length))
                 throw new IOException("frame_type_or_length_invalid");
         }
         static void validatePayload(int type, byte[] payload) throws IOException {
+            if (type == AUTH && payload.length == 33 && payload[32] != 1)
+                throw new IOException("caller_capability_invalid");
             if (type == JOIN) {
                 try { canonicalId(new String(payload, StandardCharsets.US_ASCII)); }
                 catch (IllegalArgumentException invalid) { throw new IOException("canonical_call_uuid_required"); }
@@ -1498,13 +1601,23 @@ public final class TelephonyNetworkBridge {
             return result;
         }
         static byte[] auth(byte[] key, byte[] challenge) throws Exception {
+            return auth(key, challenge, false);
+        }
+        static byte[] auth(byte[] key, byte[] challenge, boolean callerIdentity) throws Exception {
             if (key.length != 32 || challenge.length != 32) throw new IllegalArgumentException("auth_size_invalid");
             Mac mac = Mac.getInstance("HmacSHA256");
             mac.init(new SecretKeySpec(key, "HmacSHA256"));
             mac.update(LABEL);
-            return mac.doFinal(challenge);
+            mac.update(challenge);
+            if (!callerIdentity) return mac.doFinal();
+            mac.update((byte) 1);
+            byte[] digest = mac.doFinal();
+            byte[] result = Arrays.copyOf(digest, 33);
+            result[32] = 1;
+            Arrays.fill(digest, (byte) 0);
+            return result;
         }
-        static void verifyResume(Socket socket, byte[] key, byte[] token) throws Exception {
+        static boolean verifyResume(Socket socket, byte[] key, byte[] token) throws Exception {
             DataInputStream input = new DataInputStream(socket.getInputStream());
             DataOutputStream output = new DataOutputStream(socket.getOutputStream());
             byte[] challenge = new byte[32];
@@ -1514,12 +1627,14 @@ public final class TelephonyNetworkBridge {
             try {
                 write(output, new Frame(CHALLENGE, 0, challenge));
                 authentication = read(input, 0);
-                expected = auth(key, challenge);
+                boolean callerIdentitySupported = authentication.payload.length == 33;
+                expected = auth(key, challenge, callerIdentitySupported);
                 if (authentication.type != AUTH || !MessageDigest.isEqual(expected, authentication.payload))
                     throw new SecurityException("resume_authentication_failed");
                 resume = read(input, 1);
                 if (resume.type != RESUME || !MessageDigest.isEqual(token, resume.payload))
                     throw new SecurityException("same_session_token_required");
+                return callerIdentitySupported;
             } finally {
                 Arrays.fill(challenge, (byte) 0);
                 if (authentication != null) authentication.clear();
@@ -1543,6 +1658,12 @@ public final class TelephonyNetworkBridge {
             for (byte value : digest) hex.append(String.format(java.util.Locale.ROOT, "%02x", value & 255));
             if (!"0d72196d414a07b3be02b55ea133f15c6a1962e7db7278289f07867382555100".contentEquals(hex))
                 throw new AssertionError("auth_vector");
+            byte[] capable = auth(key, challenge, true);
+            StringBuilder capabilityHex = new StringBuilder();
+            for (byte value : capable) capabilityHex.append(String.format(java.util.Locale.ROOT, "%02x", value & 255));
+            if (!"6a6d84c3e2a579440e0fd1b32bc5dc5cc9cc0e66bd13803adec385dc652040ab01".contentEquals(capabilityHex)
+                    || MessageDigest.isEqual(digest, Arrays.copyOf(capable, 32)))
+                throw new AssertionError("authenticated_capability_vector");
             byte[] wrong = digest.clone(); wrong[0] ^= 1;
             if (MessageDigest.isEqual(digest, wrong)) throw new AssertionError("bad_auth_accepted");
             ByteArrayOutputStream bytes = new ByteArrayOutputStream();
@@ -1566,6 +1687,8 @@ public final class TelephonyNetworkBridge {
             reject(Arrays.copyOf(stream, 9), 0); // truncated payload
             reject(new byte[]{0x30, 0, 0, 1, 0, 0, 0, 0, 0}, 0); // invalid answer value
             reject(new byte[]{0x20, 0, 0, 1, 0, 0, 0, 0, 3}, 0); // invalid state value
+            byte[] invalidCapability = new byte[41]; invalidCapability[0] = AUTH; invalidCapability[3] = 33; invalidCapability[40] = 2;
+            reject(invalidCapability, 0);
             short[] samples = new short[SAMPLES]; samples[0] = Short.MIN_VALUE; samples[1] = Short.MAX_VALUE; samples[2] = -1;
             byte[] pcm = pcmBytes(samples); short[] restored = new short[SAMPLES]; pcmShorts(pcm, restored);
             if (!Arrays.equals(samples, restored)) throw new AssertionError("pcm_le_roundtrip");

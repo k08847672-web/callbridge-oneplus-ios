@@ -28,6 +28,7 @@ struct NetworkPathDiagnostics {
 
 enum BridgeClientEvent {
     case callID(UUID)
+    case callerIdentity(CallIdentityUpdate)
     case stage(BridgeStage)
     case statistics(NetworkStatistics)
     case diagnostic(String, String?, Int?)
@@ -261,7 +262,9 @@ final class BridgeClient {
             didReceiveChallenge = true
             var message = PJZCallProtocol.name
             message.append(frame.payload)
-            let tag = Data(HMAC<SHA256>.authenticationCode(for: message, using: SymmetricKey(data: key)))
+            if !requiresSimulation { message.append(PJZCallProtocol.callerIdentityCapability) }
+            var tag = Data(HMAC<SHA256>.authenticationCode(for: message, using: SymmetricKey(data: key)))
+            if !requiresSimulation { tag.append(PJZCallProtocol.callerIdentityCapability) }
             if requiresSimulation {
                 key.resetBytes(in: 0..<key.count)
                 key.removeAll(keepingCapacity: false)
@@ -275,6 +278,14 @@ final class BridgeClient {
             return
         }
         guard frame.type != PJZCallProtocol.challenge else { throw BridgeProtocolError.invalidMessage }
+        if frame.type == PJZCallProtocol.callerIdentity {
+            let update = try CallIdentityUpdate(payload: frame.payload)
+            guard !requiresSimulation, announcedCallID == update.callID || requestedJoinID == update.callID else {
+                throw BridgeProtocolError.invalidState
+            }
+            emit(.callerIdentity(update))
+            return
+        }
         if frame.type == PJZCallProtocol.join {
             guard !requiresSimulation, recoveryDeadline == nil else { throw BridgeProtocolError.invalidState }
             let id = try PJZCallProtocol.decodeCallID(frame.payload)

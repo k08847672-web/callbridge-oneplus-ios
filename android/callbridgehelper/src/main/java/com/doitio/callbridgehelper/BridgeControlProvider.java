@@ -36,6 +36,10 @@ public final class BridgeControlProvider extends ContentProvider {
                 if (code == CallBridgeControl.PING) reply.writeInt(CallBridgeControl.VERSION);
                 else if (code == CallBridgeControl.CLAIM) reply.writeString(result.callId);
                 reply.writeInt(result.state);
+                if (code == CallBridgeControl.CLAIM || code == CallBridgeControl.STATE) {
+                    reply.writeString(result.callerName);
+                    reply.writeString(result.callerNumber);
+                }
                 return true;
             } catch (Exception error) {
                 request.cancel(false);

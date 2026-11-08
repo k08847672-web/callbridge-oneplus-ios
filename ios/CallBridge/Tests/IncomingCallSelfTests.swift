@@ -21,6 +21,24 @@ struct IncomingCallSelfTests {
         let payload: [AnyHashable: Any] = ["aps": [:], "pairing_id": pairingID.uuidString.lowercased(),
             "call_id": callID.uuidString.lowercased(), "revision": 1, "state": "ringing"]
         try check(try CallInvitation(payload: payload) == invitation, "wire payload")
+        var namedPayload = payload
+        namedPayload["caller_name"] = "  合成联系人\n "
+        namedPayload["caller_number"] = " +12025550100\u{7f} "
+        let named = try CallInvitation(payload: namedPayload)
+        try check(named.caller == CallerIdentity(name: "合成联系人", number: "+12025550100"), "optional caller cleanup")
+        try check(named.caller.displayName == "合成联系人", "name takes priority over number")
+        try check(CallerIdentity(number: "+12025550100").displayName == "+12025550100", "unnamed caller shows number")
+        try check(CallerIdentity(name: " \n").displayName == "未知来电", "missing identity remains a usable call")
+        var malformedMetadata = payload
+        malformedMetadata["caller_name"] = 42
+        try check(try CallInvitation(payload: malformedMetadata).caller == CallerIdentity(), "invalid optional metadata does not drop call")
+        var identityState = CallIdentityState()
+        identityState.update(callID: callID, caller: CallerIdentity(number: "+12025550100"), direct: false)
+        identityState.update(callID: callID, caller: named.caller, direct: true)
+        identityState.update(callID: callID, caller: CallerIdentity(number: "+12025550100"), direct: false)
+        try check(identityState.caller == named.caller, "stale push cannot overwrite direct caller identity")
+        identityState.update(callID: other, caller: CallerIdentity(), direct: false)
+        try check(identityState.callID == other && identityState.caller.displayName == "未知来电", "next call never inherits previous caller")
         for (field, value) in [("revision", 2 as Any), ("state", "ended" as Any), ("call_id", "wrong" as Any)] {
             var bad = payload; bad[field] = value
             try check((try? CallInvitation(payload: bad)) == nil, "reject invalid invitation")
@@ -63,7 +81,7 @@ struct IncomingCallSelfTests {
         var report: ((Bool) -> Void)?
         let coordinator = IncomingCallCoordinator(loadPairing: { id in
             guard id == pairingID else { throw IncomingCallError.missingPairing }; return pairing
-        }, reportIncoming: { _, completion in events.append("report"); report = completion },
+        }, reportIncoming: { _, _, completion in events.append("report"); report = completion },
            join: { _, _ in events.append("join") }, end: { _ in events.append("end") },
            now: { time }, schedule: { _, work in scheduled.append(work) })
         coordinator.receive(invitation) { events.append("push_complete") }
@@ -115,6 +133,21 @@ struct IncomingCallSelfTests {
         report?(true)
         try check(coordinator.current == nil && events.filter { $0 == "join" }.count == joinsBefore,
                   "missing or inaccessible pairing still completes report without device control")
+
+        var reports = 0, joins = 0
+        var pendingReport: ((Bool) -> Void)?
+        var callerUpdates: [CallerIdentity] = []
+        let identityCoordinator = IncomingCallCoordinator(loadPairing: { _ in pairing },
+            reportIncoming: { _, _, completed in reports += 1; pendingReport = completed },
+            updateCaller: { _, caller in callerUpdates.append(caller) },
+            join: { _, _ in joins += 1 }, end: { _ in })
+        identityCoordinator.receive(invitation) {}
+        identityCoordinator.receive(named) {}
+        pendingReport?(true)
+        try check(reports == 1 && joins == 1 && callerUpdates == [named.caller],
+                  "late push identity updates same CallKit report and preserves pending JOIN")
+        identityCoordinator.receive(CallInvitation(pairingID: pairingID, callID: other, caller: named.caller)) {}
+        try check(reports == 1 && joins == 1 && callerUpdates.count == 1, "another call cannot update current caller")
         print("INCOMING_CALL_LOCAL passed=\(checks) synthetic=true apns_delivery_verified=false locked_wakeup_verified=false")
     }
     enum Failure: Error { case failed(String) }

@@ -5,13 +5,14 @@ root=Path(__file__).resolve().parents[3];build=Path(sys.argv[1]);build.mkdir(par
 bridge=(root/'scripts/diagnostics/TelephonyNetworkBridge.java').read_text()
 a=bridge.index('    private static final class OwnedCallFailure');b=bridge.index('    private static final class Session',a)
 owned=bridge[a:b].replace('Class.forName("android.app.IActivityManager")','Class.forName("FakeActivityManagerApi")').replace('Class.forName("android.app.ActivityManager")','Class.forName("FakeActivityManager")').replace('Class.forName("android.content.IContentProvider")','Class.forName("FakeProviderApi")')
+identity=bridge[bridge.index('    static final class CallerIdentity'):bridge.index('    /** Actual Call state')]
 helper=root/'android/callbridgehelper/src/main/java/com/doitio/callbridgehelper'
 sources=[]
 for name in ['CallBridgeControl.java','BridgeInCallService.java','BridgeControlProvider.java']:
  text=(helper/name).read_text();text='\n'.join(line for line in text.splitlines() if not line.startswith(('package ','import ')))
  text=text.replace('public final class ','class ');sources.append(text)
 stubs=r"""
-import java.io.*;import java.util.*;import java.util.concurrent.*;import java.util.concurrent.atomic.*;import java.lang.reflect.*;
+import java.io.*;import java.util.*;import java.util.concurrent.*;import java.util.concurrent.atomic.*;import java.lang.reflect.*;import java.nio.charset.*;
 class RemoteException extends Exception{RemoteException(String message){super(message);}}
 interface IBinder{int FIRST_CALL_TRANSACTION=1,INTERFACE_TRANSACTION=1598968902;interface DeathRecipient{void binderDied();}boolean transact(int code,Parcel data,Parcel reply,int flags)throws RemoteException;String getInterfaceDescriptor()throws RemoteException;void linkToDeath(DeathRecipient recipient,int flags)throws RemoteException;boolean unlinkToDeath(DeathRecipient recipient,int flags);}
 class Binder implements IBinder{
@@ -24,7 +25,7 @@ class Binder implements IBinder{
 }
 class Parcel{final List<Object>values=new ArrayList<>();int cursor;static Parcel obtain(){return new Parcel();}void recycle(){}void writeInterfaceToken(String value){writeString(value);}void enforceInterface(String expected){if(!expected.equals(readString()))throw new SecurityException("descriptor");}void writeStrongBinder(IBinder value){values.add(value);}IBinder readStrongBinder(){return(IBinder)values.get(cursor++);}void writeString(String value){values.add(value);}String readString(){return(String)values.get(cursor++);}void writeInt(int value){values.add(value);}int readInt(){return(Integer)values.get(cursor++);}void writeNoException(){writeInt(0);}void readException(){if(readInt()!=0)throw new IllegalStateException();}}
 class Bundle{final Map<String,Object>values=new HashMap<>();void putBinder(String key,IBinder binder){values.put(key,binder);}IBinder getBinder(String key){return(IBinder)values.get(key);}void putInt(String key,int value){values.put(key,value);}int getInt(String key){return(Integer)values.get(key);}void putBoolean(String key,boolean value){values.put(key,value);}}
-class Intent{}class Uri{}class ContentValues{}interface Cursor{}
+class Intent{}class Uri{final String scheme,number;Uri(String scheme,String number){this.scheme=scheme;this.number=number;}String getScheme(){return scheme;}String getSchemeSpecificPart(){return number;}}class ContentValues{}interface Cursor{}
 class Context{void enforceCallingPermission(String permission,String reason){if(Binder.getCallingUid()!=2000)throw new SecurityException(reason);}}
 class ContentProvider{final Context context=new Context();Context getContext(){return context;}public boolean onCreate(){return true;}public Bundle call(String authority,String method,String argument,Bundle extras){return null;}public Cursor query(Uri uri,String[]projection,String selection,String[]args,String order){return null;}public String getType(Uri uri){return null;}public Uri insert(Uri uri,ContentValues values){return null;}public int delete(Uri uri,String selection,String[]args){return 0;}public int update(Uri uri,ContentValues values,String selection,String[]args){return 0;}}
 class Looper{static Looper getMainLooper(){return new Looper();}}
@@ -33,7 +34,8 @@ class SystemClock{static void sleep(long ms){try{Thread.sleep(ms);}catch(Interru
 class Process{static int myUid(){return 2000;}static int myPid(){return 1;}}
 class AttributionSource{final int uid;final String pkg;AttributionSource(int uid,String pkg){this.uid=uid;this.pkg=pkg;}static class Builder{final int uid;String pkg;Builder(int uid){this.uid=uid;}Builder setPid(int pid){return this;}Builder setPackageName(String name){pkg=name;return this;}AttributionSource build(){return new AttributionSource(uid,pkg);}}}
 class VideoProfile{static final int STATE_AUDIO_ONLY=0;}
-class Call{static final int STATE_RINGING=2,STATE_ACTIVE=4;volatile int state=2;int answers,ends;static class Details{static final int DIRECTION_INCOMING=0,PROPERTY_SELF_MANAGED=1,PROPERTY_IS_EXTERNAL_CALL=2;int getCallDirection(){return 0;}boolean hasProperty(int property){return false;}}int getState(){return state;}Details getDetails(){return new Details();}void answer(int video){answers++;}void disconnect(){ends++;}}
+class TelecomManager{static final int PRESENTATION_ALLOWED=1;}
+class Call{static final int STATE_RINGING=2,STATE_ACTIVE=4;volatile int state=2;int answers,ends;final Details details=new Details();static class Details{static final int DIRECTION_INCOMING=0,PROPERTY_SELF_MANAGED=1,PROPERTY_IS_EXTERNAL_CALL=2;volatile String contact,network;volatile Uri handle;volatile int presentation=1,namePresentation=1;int getCallDirection(){return 0;}boolean hasProperty(int property){return false;}int getHandlePresentation(){return presentation;}int getCallerDisplayNamePresentation(){return namePresentation;}String getContactDisplayName(){return contact;}String getCallerDisplayName(){return network;}Uri getHandle(){return handle;}}int getState(){return state;}Details getDetails(){return details;}void answer(int video){answers++;}void disconnect(){ends++;}}
 class InCallService{final List<Call>calls=new CopyOnWriteArrayList<>();List<Call>getCalls(){return calls;}public void onCreate(){}public boolean onUnbind(Intent intent){calls.clear();return false;}public void onDestroy(){}public void onCallAdded(Call call){}public void onCallRemoved(Call call){}}
 interface FakeProviderApi{Bundle call(AttributionSource source,String authority,String method,String argument,Bundle extras);}
 class FakeHolder{public final FakeProviderApi provider;FakeHolder(FakeProviderApi provider){this.provider=provider;}}
@@ -53,7 +55,7 @@ tests=r"""
  static void check(boolean value,String label){if(!value)throw new AssertionError(label);}
  static void until(java.util.function.BooleanSupplier condition)throws Exception{long end=System.currentTimeMillis()+5000;while(!condition.getAsBoolean()&&System.currentTimeMillis()<end)Thread.sleep(5);check(condition.getAsBoolean(),"async_state");}
  static void mainTask(Runnable job)throws Exception{FutureTask<Void>task=new FutureTask<>(job,null);Handler.jobs.execute(task);task.get(5,TimeUnit.SECONDS);}
- static int ping(IBinder control)throws Exception{Parcel data=Parcel.obtain(),reply=Parcel.obtain();data.writeInterfaceToken(CallBridgeControl.DESCRIPTOR);check(control.transact(CallBridgeControl.PING,data,reply,0),"ping_transaction");reply.readException();check(reply.readInt()==1,"protocol_version");return reply.readInt();}
+ static int ping(IBinder control)throws Exception{Parcel data=Parcel.obtain(),reply=Parcel.obtain();data.writeInterfaceToken(CallBridgeControl.DESCRIPTOR);check(control.transact(CallBridgeControl.PING,data,reply,0),"ping_transaction");reply.readException();check(reply.readInt()==2,"protocol_version");return reply.readInt();}
  public static void main(String[]args)throws Exception{
   FakeManager manager=FakeActivityManager.manager;Bundle bootstrap=manager.helper.call(CallBridgeControl.AUTHORITY,"control",null,null);IBinder binder=bootstrap.getBinder("control");check(ping(binder)==0,"ping_without_telecom_no_call");
   Binder.uid.set(10001);try{ping(binder);throw new AssertionError("non_shell_allowed");}catch(SecurityException expected){}try{manager.helper.call(CallBridgeControl.AUTHORITY,"control",null,null);throw new AssertionError("non_shell_bootstrap_allowed");}catch(SecurityException expected){}finally{Binder.uid.set(2000);}
@@ -63,7 +65,15 @@ tests=r"""
   BridgeInCallService service=new BridgeInCallService();mainTask(service::onCreate);Call original=new Call();mainTask(()->{service.calls.add(original);service.onCallAdded(original);});check(ping(binder)==1&&original.answers==0&&original.ends==0,"ping_is_read_only");
   String stable;
   try(OwnedCall owned=new OwnedCall(new Context())){
-   owned.observeBeforeAnswer();stable=owned.callId;owned.disconnect();check(original.ends==0,"ringing_not_disconnected");owned.answer();owned.answer();check(original.answers==1,"answer_original_once");check(owned.state==1,"answer_pending_still_ringing");
+   owned.observeBeforeAnswer();stable=owned.callId;
+   check(owned.caller.name==null&&owned.caller.number==null,"missing_identity_no_gate");
+   original.details.handle=new Uri("tel","+15550000001");until(()->"+15550000001".equals(owned.caller.number));
+   original.details.network=" Network caller ";until(()->"Network caller".equals(owned.caller.name));
+   original.details.contact="  合成联系人\n\u007f  ";until(()->"合成联系人".equals(owned.caller.name));
+   check(stable.equals(owned.callId)&&original.answers==0,"late_contact_same_call_no_answer_or_wait");
+   original.details.presentation=2;original.details.namePresentation=2;until(()->owned.caller.name==null&&owned.caller.number==null);
+   original.details.presentation=1;original.details.namePresentation=1;original.details.contact=null;original.details.network=null;original.details.handle=new Uri("sip","synthetic@example.invalid");until(()->owned.caller.name==null&&owned.caller.number==null);
+   owned.disconnect();check(original.ends==0,"ringing_not_disconnected");owned.answer();owned.answer();check(original.answers==1,"answer_original_once");check(owned.state==1,"answer_pending_still_ringing");
    original.state=Call.STATE_ACTIVE;until(owned::active);Call other=new Call();other.state=Call.STATE_ACTIVE;service.calls.add(other);owned.disconnect();owned.disconnect();check(original.ends==1&&other.ends==0,"only_exact_original_disconnected_once");service.calls.remove(other);
   }
   original.state=Call.STATE_RINGING;original.answers=original.ends=0;
@@ -74,11 +84,11 @@ tests=r"""
   try(OwnedCall unbound=new OwnedCall(new Context())){mainTask(()->service.onUnbind(new Intent()));until(()->unbound.state==0);check(original.ends==0,"telecom_unbind_releases_without_hangup");}
   mainTask(()->{service.calls.add(original);service.onCallAdded(original);});try(OwnedCall rebound=new OwnedCall(new Context())){rebound.observeBeforeAnswer();}
   mainTask(service::onDestroy);check(manager.tokens.isEmpty()&&manager.acquires==manager.releases,"single_external_token_balanced_all_paths");
-  System.out.println("PASS actual_provider_binder_client UID_and_descriptor_enforced explicit_shell_attribution no_call_cleanup pending_answer original_UUID answer_once exact_disconnect_once owner_death_release manual_call_untouched no_replacement balanced_external_tokens");
+  System.out.println("PASS actual_provider_binder_client v2 current_Call_identity contact_network_number hidden_presentation late_name_same_call UID_and_descriptor_enforced pending_answer original_UUID answer_once exact_disconnect_once owner_death_release manual_call_untouched balanced_external_tokens");
  }
 }
 """
-java=build/'BinderOwnershipFixture.java';java.write_text(stubs+'\n'.join(sources)+fixture+owned+tests)
+java=build/'BinderOwnershipFixture.java';java.write_text(stubs+'\n'.join(sources)+fixture+identity+owned+tests)
 jdk=Path(os.environ['JAVA_HOME'])/'bin'
 for phase,arguments in [('build',[str(jdk/'javac'),'--release','8',str(java)]),('result',[str(jdk/'java'),'-cp',str(build),'BinderOwnershipFixture'])]:
  result=subprocess.run(arguments,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=30);(build/('binder-'+phase+'.log')).write_text(result.stdout)

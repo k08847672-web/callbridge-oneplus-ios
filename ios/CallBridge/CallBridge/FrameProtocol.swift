@@ -30,6 +30,60 @@ struct BridgeFrame {
     let payload: Data
 }
 
+/// Display metadata for this call only. Never used for authentication or call ownership.
+struct CallerIdentity: Equatable {
+    let name: String?
+    let number: String?
+
+    init(name: String? = nil, number: String? = nil) {
+        self.name = Self.clean(name)
+        self.number = Self.clean(number)
+    }
+
+    init(fields: [AnyHashable: Any]) {
+        self.init(name: fields["caller_name"] as? String, number: fields["caller_number"] as? String)
+    }
+
+    var displayName: String { name ?? number ?? "未知来电" }
+
+    private static func clean(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let scalars = value.unicodeScalars.filter { $0.value >= 0x20 && $0.value != 0x7f }
+        let cleaned = String(String.UnicodeScalarView(scalars)).trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned.isEmpty ? nil : cleaned
+    }
+}
+
+struct CallIdentityUpdate {
+    let callID: UUID
+    let caller: CallerIdentity
+
+    init(payload: Data) throws {
+        guard !payload.isEmpty, payload.count <= PJZCallProtocol.maxPayload,
+              let fields = try? JSONSerialization.jsonObject(with: payload) as? [String: Any],
+              let value = fields["call_id"] as? String else { throw BridgeProtocolError.invalidMessage }
+        callID = try PJZCallProtocol.decodeCallID(Data(value.utf8))
+        caller = CallerIdentity(fields: fields)
+    }
+}
+
+/// Authenticated direct updates take priority over an older, duplicated push invitation.
+struct CallIdentityState {
+    private(set) var callID: UUID?
+    private(set) var caller = CallerIdentity()
+    private var receivedDirectIdentity = false
+
+    mutating func update(callID: UUID, caller: CallerIdentity, direct: Bool) {
+        if self.callID != callID {
+            self.callID = callID
+            receivedDirectIdentity = false
+        }
+        guard direct || !receivedDirectIdentity else { return }
+        self.caller = caller
+        receivedDirectIdentity = receivedDirectIdentity || direct
+    }
+}
+
 enum PJZCallProtocol {
     static let name = Data("PJZ-CALL/1".utf8)
     static let challenge: UInt8 = 0x01
@@ -38,6 +92,9 @@ enum PJZCallProtocol {
     static let uplink: UInt8 = 0x11
     static let state: UInt8 = 0x20
     static let session: UInt8 = 0x21
+    static let callerIdentity: UInt8 = 0x22
+    // AUTH = HMAC(key, name || challenge || capability) || capability. Legacy AUTH remains 32 bytes.
+    static let callerIdentityCapability: UInt8 = 0x01
     static let answer: UInt8 = 0x30
     static let resume: UInt8 = 0x31
     static let hangup: UInt8 = 0x32
@@ -105,6 +162,9 @@ enum PJZCallProtocol {
         case downlink: required = pcmBytes
         case state: required = 1
         case join: required = 36
+        case callerIdentity:
+            _ = try CallIdentityUpdate(payload: frame.payload)
+            return
         case heartbeat: required = 0
         case simulation: required = simulationLabel.count
         default: throw BridgeProtocolError.invalidMessage
