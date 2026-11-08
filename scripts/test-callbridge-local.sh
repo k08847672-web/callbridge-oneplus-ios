@@ -12,7 +12,8 @@ CALLBRIDGE_TEST_BUILD="${CALLBRIDGE_TEST_BUILD:-$(mktemp -d "${TMPDIR:-/tmp}/cal
 mkdir -p "$CALLBRIDGE_TEST_BUILD/classes"
 CALLBRIDGE_ANDROID_JAR="$CALLBRIDGE_SDK/platforms/${CALLBRIDGE_ANDROID_PLATFORM:-android-36}/android.jar"
 "$JAVA_HOME/bin/javac" --release 8 -cp "$CALLBRIDGE_ANDROID_JAR" -d "$CALLBRIDGE_TEST_BUILD/classes" \
-  "$CALLBRIDGE_ROOT/scripts/diagnostics/TelephonyNetworkBridge.java"
+  "$CALLBRIDGE_ROOT/scripts/diagnostics/TelephonyNetworkBridge.java" \
+  "$CALLBRIDGE_ROOT/android/callbridgehelper/src/main/java/com/doitio/callbridgehelper/CallBridgeControl.java"
 CALLBRIDGE_CP="$CALLBRIDGE_TEST_BUILD/classes:$CALLBRIDGE_ANDROID_JAR"
 CALLBRIDGE_SWIFT="$CALLBRIDGE_ROOT/ios/CallBridge/CallBridge"
 CALLBRIDGE_TESTS="$CALLBRIDGE_ROOT/ios/CallBridge/Tests"
@@ -38,6 +39,7 @@ fi
 "$CALLBRIDGE_PYTHON" "$CALLBRIDGE_ROOT/scripts/diagnostics/tests/callbridge_transport_regression.py" "$CALLBRIDGE_TEST_BUILD"
 "$CALLBRIDGE_PYTHON" "$CALLBRIDGE_ROOT/scripts/diagnostics/tests/callbridge_helper_regression.py" "$CALLBRIDGE_TEST_BUILD"
 "$CALLBRIDGE_PYTHON" "$CALLBRIDGE_ROOT/scripts/diagnostics/tests/callbridge_android_ingress_regression.py" "$CALLBRIDGE_TEST_BUILD"
+"$CALLBRIDGE_PYTHON" "$CALLBRIDGE_ROOT/scripts/diagnostics/tests/callbridge_wait_regression.py" "$CALLBRIDGE_TEST_BUILD"
 "$CALLBRIDGE_PYTHON" "$CALLBRIDGE_ROOT/scripts/diagnostics/tests/callbridge_swift_recovery.py" "$CALLBRIDGE_TEST_BUILD"
 "$CALLBRIDGE_NODE" --test "$CALLBRIDGE_ROOT"/callbridge_push/tests/*.test.mjs
 printf 'PASS local synthetic checks. Hardware, APNs delivery and locked-screen wakeup remain unverified. Artifacts: %s\n' "$CALLBRIDGE_TEST_BUILD"

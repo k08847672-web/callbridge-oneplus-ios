@@ -1,6 +1,12 @@
 # 交给朋友 Codex：修复 production APNs TopicDisallowed
 
-当前状态：朋友已在现有 Production / Topic Specific key 的范围中补入本 App。使用同一 provider 配置、同一 key、同一真实 production token 一次重测，**2026-11-07 12:43:50.308 UTC 返回 HTTP 200 / `AppleAccepted=true`**，原 `TopicDisallowed` 阻断已解除。随后使用同配对的合成来电 peer 完成真实 production APNs HTTP 200、配对 AUTH / JOIN，并直接观察到物理 iPhone 锁屏上的“一加来电 · 通话桥”和“滑动来接听”系统 CallKit 界面；**真实生产推送与物理 iPhone 锁屏 CallKit 的模拟验收已通过**。这次合成测试不触碰真实 Telecom 或蜂窝音频；真实蜂窝来电 → helper 这一跳、真人双向音频、真实挂断和断线恢复本轮尚未验证，不能写为全功能通过。无需用户再更新 App、导入配对或朋友再修改 key；第 3、4 节原流程保留作实际缺项排查参考。
+2026-11-08 当前排查状态：使用者真实拨入一加时，iPhone 未响。Mini provider 进程和监听正常，production 注册仍为 1；真实来电记录为 0。当前 `calls` 中唯一一条记录是本轮链路自测写入的合成 `ended`，`notification_attempted=false`，没有触发 APNs，不能把它算作真实来电上报成功。
+
+Android 原生产监听因 `helper_connect_unavailable` 退出，真实来电未走到 provider。原 AF_UNIX 路径已在实体机 shell 连接时复现 `EACCES`，但具体拒绝原因及对应的 SELinux 规则尚未证实；`Context.bindService` 探针则返回 `not_registered_caller`。现已完成 `getContentProviderExternal → Binder` 的生产迁移：helper 0.4 以同签名覆盖安装，生产 JAR 短哈希为 `29b531f2fa10`；已核对实体进程、`CLASSPATH` 使用新 JAR，以及 47631 端口监听。新日志出现 `helper_ready`（`installed=true`、`default_dialer_changed=false`）和 `listening`；部署后实体机 shell 的 Provider → Binder `PING` 再次返回 `version=1`、`state=0`。所需 AppOp 核验为 `allow`，默认拨号器保持不变。**已恢复后台待机，真实 SIM 来电、双向声音、同步挂断待本轮实测**；断线恢复也尚未重验，不能据此声称完整修复。
+
+iPhone 界面的“未连接”描述前台桥接连接状态，与 PushKit 启动及 token 注册独立；注册成功也不会更新这句文案。后台来电由 PushKit / CallKit 触发后再连接原通话；本次 Android 修复不要求 iPhone 重新配对或手点“连接”来保持待机，也不能只凭这句文案判断后台推送是否就绪。
+
+2026-11-07 已完成的历史验证：朋友已在现有 Production / Topic Specific key 的范围中补入本 App。使用同一 provider 配置、同一 key、同一真实 production token 一次重测，**2026-11-07 12:43:50.308 UTC 返回 HTTP 200 / `AppleAccepted=true`**，原 `TopicDisallowed` 阻断已解除。随后使用同配对的合成来电 peer 完成真实 production APNs HTTP 200、配对 AUTH / JOIN，并直接观察到物理 iPhone 锁屏上的“一加来电 · 通话桥”和“滑动来接听”系统 CallKit 界面；**真实生产推送与物理 iPhone 锁屏 CallKit 的模拟验收已通过**。这次合成测试不触碰真实 Telecom 或蜂窝音频；真实蜂窝来电 → helper 这一跳、真人双向音频、真实挂断和断线恢复本轮尚未验证，不能写为全功能通过。无需用户再更新 App、导入配对或朋友再修改 key；第 3、4 节原流程保留作实际缺项排查参考。
 
 历史证据：2026-11-07 已确认 TestFlight 1.0 (2)、配对导入成功及 Mini 的 1 条 production PushKit token 注册；当日 10:17:47 UTC 使用真实注册请求 production APNs 曾返回 **HTTP 400 / `TopicDisallowed`**。后续补充上述现有 key 的关联范围并取得真实 HTTP 200，无需使用者再次真人拨号来定位该授权问题。若将来实际缺项确需更换 key，`.p8` 仍仅经既有私密文件通道交付，绝不进入聊天或 Git。
 

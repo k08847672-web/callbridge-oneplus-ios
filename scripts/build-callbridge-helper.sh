@@ -14,7 +14,9 @@ BRIDGE_HELPER_BUILD="$(mktemp -d "${TMPDIR:-/tmp}/pjz-callbridge-helper.XXXXXX")
 mkdir -p "$BRIDGE_HELPER_BUILD/classes" "$BRIDGE_HELPER_BUILD/dex"
 "$BRIDGE_HELPER_JDK/bin/javac" --release 8 -cp "$BRIDGE_HELPER_SDK/platforms/$BRIDGE_HELPER_PLATFORM/android.jar" \
   -d "$BRIDGE_HELPER_BUILD/classes" \
-  "$BRIDGE_HELPER_ROOT/android/callbridgehelper/src/main/java/com/doitio/callbridgehelper/BridgeInCallService.java"
+  "$BRIDGE_HELPER_ROOT/android/callbridgehelper/src/main/java/com/doitio/callbridgehelper/BridgeInCallService.java" \
+  "$BRIDGE_HELPER_ROOT/android/callbridgehelper/src/main/java/com/doitio/callbridgehelper/BridgeControlProvider.java" \
+  "$BRIDGE_HELPER_ROOT/android/callbridgehelper/src/main/java/com/doitio/callbridgehelper/CallBridgeControl.java"
 BRIDGE_HELPER_CLASSES=("$BRIDGE_HELPER_BUILD"/classes/com/doitio/callbridgehelper/*.class)
 "$BRIDGE_HELPER_TOOLS/d8" --min-api 31 --lib "$BRIDGE_HELPER_SDK/platforms/$BRIDGE_HELPER_PLATFORM/android.jar" \
   --output "$BRIDGE_HELPER_BUILD/dex" "${BRIDGE_HELPER_CLASSES[@]}"

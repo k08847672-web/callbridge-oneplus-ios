@@ -12,6 +12,11 @@ import android.media.AudioRecord;
 import android.media.AudioTrack;
 import android.media.MediaRecorder;
 import android.os.Looper;
+import android.os.Binder;
+import android.os.Bundle;
+import android.os.IBinder;
+import android.os.Parcel;
+import com.doitio.callbridgehelper.CallBridgeControl;
 import android.os.Process;
 import android.os.SystemClock;
 import android.telecom.TelecomManager;
@@ -106,6 +111,7 @@ public final class TelephonyNetworkBridge {
         int status = 1;
         Config config = null;
         Session session = null;
+        ServerSocket listener = null;
         try {
             if (args.length != 1) throw new IllegalArgumentException("one_private_config_path_required");
             if (Process.myUid() != 2000) throw new SecurityException("shell_uid_required");
@@ -116,13 +122,15 @@ public final class TelephonyNetworkBridge {
             inspect(context, audio, telecom);
             requireIdle(audio, telecom);
             prepareHelper(context);
+            listener = new ServerSocket();
+            listener.setReuseAddress(false);
+            listener.bind(new InetSocketAddress(config.bindAddress, config.port), 2);
             // One explicit process can observe later incoming calls without keeping an iPhone socket open.
             while (true) {
-                session = new Session(config, context, audio, telecom);
+                session = new Session(config, context, audio, telecom, listener);
                 session.run();
                 status = session.completedAudioExchange() ? 0 : 2;
                 session.close(); session = null;
-                requireIdle(audio, telecom);
             }
         } catch (Throwable error) { failure(session == null ? "startup_failed" : session.phase + "_failed", error); }
         finally {
@@ -130,6 +138,7 @@ public final class TelephonyNetworkBridge {
                 try { session.close(); }
                 catch (Throwable error) { failure("cleanup_failed", error); status = 1; }
             }
+            if (listener != null) try { listener.close(); } catch (IOException ignored) { }
             if (config != null) Arrays.fill(config.key, (byte) 0);
             emit("closed", "exit_status", status, "pcm_saved", false, "settings_written", false,
                     "calls_placed", false, "owned_hangup_attempted", session != null && session.recovery.ended,
@@ -670,82 +679,120 @@ public final class TelephonyNetworkBridge {
         }
     }
 
-    /** Shell-only local control of one exact Call object held by the minimal InCallService. */
+    /** Shell-only Binder control of one exact Call object held by the minimal InCallService. */
     private static final class OwnedCallFailure extends IOException {
         final String reason;
         OwnedCallFailure(String reason, Throwable cause) { super(reason, cause); this.reason = reason; }
     }
 
     private static final class OwnedCall implements AutoCloseable {
-        final android.net.LocalSocket channel;
-        final DataOutputStream output;
+        final IBinder owner = new Binder();
+        final IBinder externalToken = new Binder();
         final String callId;
         final CountDownLatch initialState = new CountDownLatch(1);
+        final AtomicBoolean closed = new AtomicBoolean();
+        final int userId = Process.myUid() / 100000;
         volatile int state = -1;
         volatile IOException observationError;
+        volatile IBinder control;
+        Object activityManager;
+        boolean providerAcquired;
         Thread observer;
-        OwnedCall(Context context, byte[] token) throws Exception {
-            int helperUid = context.getPackageManager().getApplicationInfo("com.doitio.callbridgehelper", 0).uid;
-            android.net.LocalSocket selected = null;
-            long readyUntil = now() + 3000;
-            while (selected == null) {
-                android.net.LocalSocket attempt = new android.net.LocalSocket();
-                try {
-                    attempt.connect(new android.net.LocalSocketAddress("pjz-callbridge-owned-call",
-                            android.net.LocalSocketAddress.Namespace.ABSTRACT));
-                    if (attempt.getPeerCredentials().getUid() != helperUid)
-                        throw new SecurityException("installed_helper_identity_required");
-                    selected = attempt;
-                } catch (IOException notReady) {
-                    attempt.close();
-                    if (now() >= readyUntil) throw new OwnedCallFailure("helper_connect_unavailable", notReady);
-                    SystemClock.sleep(20);
-                }
-            }
-            channel = selected;
-            final DataInputStream input;
+        OwnedCall(Context context) throws Exception {
+            String phase = "helper_provider_acquire_failed";
             try {
-                output = new DataOutputStream(channel.getOutputStream());
-                output.writeInt(0x50435a32); output.write(token); output.flush();
-                channel.setSoTimeout(4000);
-                input = new DataInputStream(channel.getInputStream());
-                byte[] identity = new byte[36]; input.readFully(identity);
-                callId = canonicalId(new String(identity, StandardCharsets.US_ASCII));
-                channel.setSoTimeout(0);
+                // Same AMS external-provider entry used by Android's official shell content command.
+                Class<?> api = Class.forName("android.app.IActivityManager");
+                activityManager = Class.forName("android.app.ActivityManager").getMethod("getService").invoke(null);
+                Object holder = api.getMethod("getContentProviderExternal", String.class, int.class, IBinder.class, String.class)
+                        .invoke(activityManager, CallBridgeControl.AUTHORITY, userId, externalToken, "CallBridgeOwnedCall");
+                if (holder == null) throw new OwnedCallFailure("helper_provider_unavailable", null);
+                providerAcquired = true;
+                Object provider = holder.getClass().getField("provider").get(holder);
+                phase = "helper_control_acquire_failed";
+                AttributionSource source = new AttributionSource.Builder(Process.myUid()).setPid(Process.myPid())
+                        .setPackageName("com.android.shell").build();
+                Bundle bootstrap = (Bundle) Class.forName("android.content.IContentProvider")
+                        .getMethod("call", AttributionSource.class, String.class, String.class, String.class, Bundle.class)
+                        .invoke(provider, source, CallBridgeControl.AUTHORITY, CallBridgeControl.METHOD_CONTROL, null, null);
+                control = bootstrap == null ? null : bootstrap.getBinder(CallBridgeControl.BINDER_KEY);
+                if (control == null || !CallBridgeControl.DESCRIPTOR.equals(control.getInterfaceDescriptor()))
+                    throw new OwnedCallFailure("helper_control_unavailable", null);
+                phase = "helper_binder_claim_failed";
+                Parcel reply = request(CallBridgeControl.CLAIM);
+                try {
+                    String id = reply.readString();
+                    int value = reply.readInt();
+                    if (id == null) throw new OwnedCallFailure("helper_no_ringing_call", null);
+                    callId = canonicalId(id);
+                    state = checkedState(value);
+                    initialState.countDown();
+                } finally { reply.recycle(); }
             } catch (Exception error) {
-                try { channel.close(); } catch (IOException ignored) { }
-                throw new OwnedCallFailure("helper_identity_exchange_failed", error);
+                close();
+                while (error instanceof InvocationTargetException && error.getCause() instanceof Exception)
+                    error = (Exception) error.getCause();
+                if (error instanceof OwnedCallFailure) throw error;
+                throw new OwnedCallFailure(phase, error);
             }
             observer = daemon("bridge-original-call-observer", () -> {
                 try {
-                    while (true) {
-                        int value = input.readUnsignedByte();
-                        if (value > 2) throw new IOException("owned_call_state_invalid");
-                        state = value; initialState.countDown();
+                    while (!closed.get() && state != 0) {
+                        int value = command(CallBridgeControl.STATE);
+                        if (!closed.get()) state = value;
                         if (value == 0) return;
+                        SystemClock.sleep(20);
                     }
-                } catch (IOException ended) { observationError = ended; state = 0; initialState.countDown(); }
+                } catch (IOException ended) { observationError = ended; state = 0; }
             });
         }
+        private static int checkedState(int value) throws IOException {
+            if (value < 0 || value > 2) throw new IOException("owned_call_state_invalid");
+            return value;
+        }
+        private Parcel request(int code) throws IOException {
+            Parcel data = Parcel.obtain(), reply = Parcel.obtain();
+            boolean success = false;
+            try {
+                IBinder binder = control;
+                if (binder == null) throw new IOException("helper_binder_disconnected");
+                data.writeInterfaceToken(CallBridgeControl.DESCRIPTOR);
+                data.writeStrongBinder(owner);
+                if (!binder.transact(code, data, reply, 0)) throw new IOException("helper_binder_transaction_unavailable");
+                reply.readException(); success = true;
+                return reply;
+            } catch (Exception error) { throw new IOException("helper_binder_transaction_failed", error); }
+            finally { data.recycle(); if (!success) reply.recycle(); }
+        }
+        private int command(int code) throws IOException {
+            Parcel reply = request(code);
+            try { return checkedState(reply.readInt()); }
+            finally { reply.recycle(); }
+        }
         void observeBeforeAnswer() throws Exception {
-            if (!initialState.await(3, TimeUnit.SECONDS))
-                throw new OwnedCallFailure("helper_initial_state_timeout", null);
-            if (state != 1)
-                throw new OwnedCallFailure(observationError == null ? "helper_call_not_ringing" : "helper_initial_state_failed",
-                        observationError);
+            if (!initialState.await(3, TimeUnit.SECONDS)) throw new OwnedCallFailure("helper_initial_state_timeout", null);
+            if (state != 1) throw new OwnedCallFailure(observationError == null ? "helper_call_not_ringing" : "helper_initial_state_failed", observationError);
         }
         synchronized void answer() throws IOException {
             if (state != 1) throw new IOException("original_call_not_ringing");
-            output.writeByte(1); output.flush();
+            command(CallBridgeControl.ANSWER);
         }
         boolean active() { return state == 2; }
         synchronized void disconnect() throws IOException {
-            if (!active()) return;
-            output.writeByte(2); output.flush();
+            if (active()) command(CallBridgeControl.DISCONNECT);
         }
         @Override public void close() {
+            if (!closed.compareAndSet(false, true)) return;
             state = 0;
-            try { channel.close(); } catch (IOException ignored) { }
+            try { if (control != null) command(CallBridgeControl.RELEASE); } catch (IOException ignored) { }
+            if (providerAcquired) {
+                providerAcquired = false;
+                try {
+                    Class.forName("android.app.IActivityManager")
+                            .getMethod("removeContentProviderExternalAsUser", String.class, IBinder.class, int.class)
+                            .invoke(activityManager, CallBridgeControl.AUTHORITY, externalToken, userId);
+                } catch (Exception error) { failure("helper_provider_release_failed", error); }
+            }
             join(observer);
         }
     }
@@ -796,23 +843,22 @@ public final class TelephonyNetworkBridge {
         long lastHead;
         final Settings initialSettings;
 
-        Session(Config config, Context context, AudioManager audio, TelecomManager telecom) {
+        Session(Config config, Context context, AudioManager audio, TelecomManager telecom, ServerSocket listener) {
             this.config = config; this.context = context; this.audio = audio; this.telecom = telecom;
+            this.listener = listener;
             initialSettings = new Settings(audio);
             pushes = new PushEvents(config);
             new SecureRandom().nextBytes(sessionToken);
         }
 
         void run() throws Exception {
-            listener = new ServerSocket();
-            listener.setReuseAddress(false);
-            listener.bind(new InetSocketAddress(config.bindAddress, config.port), 2);
             listener.setSoTimeout(250);
             resumeAcceptor = daemon("bridge-connection-listener", this::acceptResumes);
             emit("listening", "tailscale_only", true, "allow_answer", config.allowAnswer,
                     "observes_without_client", true);
             phase = "wait_new_call";
             long heartbeatAt = now() + 2000;
+            String lastHelperFailure = null;
             while (!stopped.get()) {
                 long time = now();
                 if (time >= heartbeatAt) {
@@ -823,9 +869,25 @@ public final class TelephonyNetworkBridge {
                 boolean isActive = active(audio, telecom);
                 if (isRinging) {
                     if (!ringSeen) {
-                        OwnedCall observed = new OwnedCall(context, sessionToken);
-                        try { observed.observeBeforeAnswer(); }
-                        catch (Exception error) { observed.close(); throw error; }
+                        OwnedCall observed = null;
+                        try {
+                            observed = new OwnedCall(context);
+                            observed.observeBeforeAnswer();
+                        } catch (OwnedCallFailure notReady) {
+                            if (observed != null) observed.close();
+                            String reason = notReady.reason + ":" + ioReason(notReady);
+                            if (!reason.equals(lastHelperFailure)) {
+                                failure("helper_waiting", notReady);
+                                lastHelperFailure = reason;
+                            }
+                            SystemClock.sleep(20);
+                            continue; // The real ringing state, not a readiness deadline, owns retries.
+                        } catch (Exception error) {
+                            if (observed != null) observed.close();
+                            throw error;
+                        }
+                        if (!ringing(telecom)) { observed.close(); continue; }
+                        lastHelperFailure = null;
                         synchronized (transportLock) {
                             ownedCall = observed;
                             incoming.ring(observed.callId);
@@ -839,23 +901,27 @@ public final class TelephonyNetworkBridge {
                         emit("new_ringing_call", "answer_enabled", config.allowAnswer, "original_call_observer_ready", true);
                     }
                     if (answerRequested.getAndSet(false)) {
-                        if (!config.allowAnswer || answerAttempted || state.get() != 1 || !ringing(telecom)
-                                || ownedCall == null || ownedCall.state != 1 || !incoming.answer())
+                        if (!config.allowAnswer || answerAttempted || state.get() != 1)
                             throw new SecurityException("answer_not_authorized_now");
+                        if (!ringing(telecom) || ownedCall == null || ownedCall.state != 1 || !incoming.answer()) {
+                            finishRemoteCall("ringing_call_ended_before_answer"); return;
+                        }
                         answerAttempted = true;
                         phase = "answer_ringing_call";
                         ownedCall.answer();
                         emit("answer_requested", "attempts", 1);
                         phase = "wait_new_call";
                     }
-                } else if (answerRequested.get()) throw new SecurityException("answer_not_ringing");
+                } else if (answerRequested.getAndSet(false)) {
+                    finishRemoteCall("ringing_call_ended_before_answer"); return;
+                }
                 if (isActive) {
-                    if (!ringSeen || !answerAttempted) throw new SecurityException("bridge_answered_incoming_required");
+                    if (ringSeen && !answerAttempted) { finishRemoteCall("answered_on_phone"); return; }
                     if (ownedCall != null && ownedCall.active()) { live(); return; }
                 }
                 if (ringSeen && ownedCall != null && ownedCall.state == 0) { finishRemoteCall("ringing_call_ended"); return; }
-                if (!ringSeen && (telecom.isInCall() || audio.getMode() != AudioManager.MODE_NORMAL))
-                    throw new SecurityException("unexpected_call_state");
+                // Local calls and Telecom/audio state transitions are observed, never adopted or controlled.
+                if (!isRinging && !ringSeen) lastHelperFailure = null;
                 SystemClock.sleep(10);
             }
         }
@@ -1258,7 +1324,6 @@ public final class TelephonyNetworkBridge {
 
         @Override public void close() {
             stop(stopReason.equals("not_started") ? "closed" : stopReason);
-            if (listener != null) try { listener.close(); } catch (IOException ignored) { }
             if (authenticatingResume != null) try { authenticatingResume.close(); } catch (IOException ignored) { }
             if (pendingResume != null) try { pendingResume.close(); } catch (IOException ignored) { }
             if (flagCheck != null) flagCheck.cancel(true);
@@ -1551,13 +1616,27 @@ public final class TelephonyNetworkBridge {
         try { thread.join(1000); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
     }
     private static long now() { return SystemClock.elapsedRealtime(); }
+    private static String ioReason(Throwable error) {
+        for (int depth = 0; error != null && depth < 8; depth++, error = error.getCause()) {
+            String message = error.getMessage();
+            if (message == null) continue;
+            for (String code : new String[]{"ECONNREFUSED", "ENOENT", "EACCES", "EPERM", "ECONNRESET", "ETIMEDOUT", "EINTR", "ENOTCONN"})
+                if (message.contains(code)) return code;
+            if (message.contains("Connection refused")) return "ECONNREFUSED";
+            if (message.contains("No such file or directory")) return "ENOENT";
+            if (message.contains("Permission denied")) return "EACCES";
+            if (message.contains("Operation not permitted")) return "EPERM";
+        }
+        return "unknown";
+    }
     private static void failure(String stage, Throwable error) {
         while (error instanceof InvocationTargetException && error.getCause() != null) error = error.getCause();
         // No exception messages, addresses, pairing material, raw dumps, phone numbers or PCM.
         if (error instanceof OwnedCallFailure) {
             OwnedCallFailure failed = (OwnedCallFailure) error;
             emit(stage, "error_class", IOException.class.getName(), "reason", failed.reason,
-                    "cause_class", failed.getCause() == null ? "none" : failed.getCause().getClass().getName());
+                    "cause_class", failed.getCause() == null ? "none" : failed.getCause().getClass().getName(),
+                    "io_reason", ioReason(failed));
         } else emit(stage, "error_class", error.getClass().getName());
     }
     private static void emit(String stage, Object... fields) {

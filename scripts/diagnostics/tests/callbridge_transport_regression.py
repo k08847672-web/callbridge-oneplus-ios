@@ -30,7 +30,7 @@ public class RecoveryServerFixture {
 lifecycle=section('    static String canonicalId(', '    /** Shared by the Android listener')
 protocol=section('    static final class Frame {','    private static final class Levels')
 queues=section('    private static final class Outbound {','    private static AudioDeviceInfo telephonyDevice')
-recovery=section('    static final class Recovery {','    /** Shell-only local control')
+recovery=section('    static final class Recovery {','    /** Shell-only Binder control')
 tests=r'''
  void cleanup()throws Exception{stop("test_end");listener.close();if(authenticatingResume!=null)authenticatingResume.close();if(pendingResume!=null)pendingResume.close();join(reader);join(writer);join(resumeAcceptor);join(coordinator);}
  }

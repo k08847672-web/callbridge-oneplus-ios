@@ -13,8 +13,10 @@ BRIDGE_TOOLS="${CALLBRIDGE_BUILD_TOOLS:-36.0.0}"
 BRIDGE_BUILD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/pjz-call-bridge.XXXXXX")"
 mkdir -p "$BRIDGE_BUILD_DIR/classes"
 "$BRIDGE_JDK_DIR/bin/javac" --release 8 -classpath "$BRIDGE_SDK_DIR/platforms/$BRIDGE_PLATFORM/android.jar" \
-  -d "$BRIDGE_BUILD_DIR/classes" "$BRIDGE_ROOT/scripts/diagnostics/TelephonyNetworkBridge.java"
+  -d "$BRIDGE_BUILD_DIR/classes" "$BRIDGE_ROOT/scripts/diagnostics/TelephonyNetworkBridge.java" \
+  "$BRIDGE_ROOT/android/callbridgehelper/src/main/java/com/doitio/callbridgehelper/CallBridgeControl.java"
 BRIDGE_CLASSES=("$BRIDGE_BUILD_DIR"/classes/com/doitio/diagnostics/*.class)
+BRIDGE_CLASSES+=("$BRIDGE_BUILD_DIR"/classes/com/doitio/callbridgehelper/*.class)
 "$BRIDGE_SDK_DIR/build-tools/$BRIDGE_TOOLS/d8" --min-api 31 \
   --lib "$BRIDGE_SDK_DIR/platforms/$BRIDGE_PLATFORM/android.jar" \
   --output "$BRIDGE_BUILD_DIR/bridge.jar" "${BRIDGE_CLASSES[@]}"
