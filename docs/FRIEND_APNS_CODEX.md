@@ -1,8 +1,8 @@
 # 交给朋友 Codex：修复 production APNs TopicDisallowed
 
-2026-11-08 当前排查状态：使用者真实拨入一加时，iPhone 未响。Mini provider 进程和监听正常，production 注册仍为 1；真实来电记录为 0。当前 `calls` 中唯一一条记录是本轮链路自测写入的合成 `ended`，`notification_attempted=false`，没有触发 APNs，不能把它算作真实来电上报成功。
+2026-11-08 本轮真机验收通过：真实 SIM 呼入时，iPhone 锁屏出现系统来电界面并成功接听；使用者确认双方声音正常，在 iPhone 挂断后一加也同步结束。Mini 已记录 1 次真实来电（排除之前的合成 `ended`），最终为 `ended / revision=2`，本次 APNs 返回 HTTP 200。先前合成记录不计入真实验收。
 
-Android 原生产监听因 `helper_connect_unavailable` 退出，真实来电未走到 provider。原 AF_UNIX 路径已在实体机 shell 连接时复现 `EACCES`，但具体拒绝原因及对应的 SELinux 规则尚未证实；`Context.bindService` 探针则返回 `not_registered_caller`。现已完成 `getContentProviderExternal → Binder` 的生产迁移：helper 0.4 以同签名覆盖安装，生产 JAR 短哈希为 `29b531f2fa10`；已核对实体进程、`CLASSPATH` 使用新 JAR，以及 47631 端口监听。新日志出现 `helper_ready`（`installed=true`、`default_dialer_changed=false`）和 `listening`；部署后实体机 shell 的 Provider → Binder `PING` 再次返回 `version=1`、`state=0`。所需 AppOp 核验为 `allow`，默认拨号器保持不变。**已恢复后台待机，真实 SIM 来电、双向声音、同步挂断待本轮实测**；断线恢复也尚未重验，不能据此声称完整修复。
+Android 原生产监听因 `helper_connect_unavailable` 退出，真实来电未走到 provider。原 AF_UNIX 路径已在实体机 shell 连接时复现 `EACCES`，但具体拒绝原因及对应的 SELinux 规则尚未证实；`Context.bindService` 探针则返回 `not_registered_caller`。现已完成 `getContentProviderExternal → Binder` 的生产迁移：helper 0.4 以同签名覆盖安装，生产 JAR 短哈希为 `29b531f2fa10`；已核对实体进程、`CLASSPATH` 使用新 JAR，以及 47631 端口监听。新日志出现 `helper_ready`（`installed=true`、`default_dialer_changed=false`）和 `listening`；部署后实体机 shell 的 Provider → Binder `PING` 再次返回 `version=1`、`state=0`。所需 AppOp 核验为 `allow`，默认拨号器保持不变。本轮真实通话结束后，一加同一生产进程保持监听，供下一次来电使用。**真实意外断线后的自动恢复未在本轮测试**；实现及本地回归结果不代替该项真人验证。
 
 iPhone 界面的“未连接”描述前台桥接连接状态，与 PushKit 启动及 token 注册独立；注册成功也不会更新这句文案。后台来电由 PushKit / CallKit 触发后再连接原通话；本次 Android 修复不要求 iPhone 重新配对或手点“连接”来保持待机，也不能只凭这句文案判断后台推送是否就绪。
 
