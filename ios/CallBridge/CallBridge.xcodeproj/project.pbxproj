@@ -209,7 +209,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CALLBRIDGE_APNS_ENVIRONMENT = sandbox;
-				CURRENT_PROJECT_VERSION = 4;
+				CURRENT_PROJECT_VERSION = 5;
 				CALLBRIDGE_APS_ENTITLEMENT = development;
 				CODE_SIGN_STYLE = Automatic;
 				CODE_SIGN_ENTITLEMENTS = CallBridge/CallBridge.entitlements;
@@ -234,7 +234,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CALLBRIDGE_APNS_ENVIRONMENT = production;
-				CURRENT_PROJECT_VERSION = 4;
+				CURRENT_PROJECT_VERSION = 5;
 				CALLBRIDGE_APS_ENTITLEMENT = production;
 				CODE_SIGN_STYLE = Automatic;
 				CODE_SIGN_ENTITLEMENTS = CallBridge/CallBridge.entitlements;

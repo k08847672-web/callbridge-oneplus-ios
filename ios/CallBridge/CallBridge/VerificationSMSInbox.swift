@@ -12,6 +12,7 @@ final class VerificationSMSInboxModel: ObservableObject {
     @Published private(set) var messages: [VerificationSMS] = []
     @Published private(set) var syncing = false
     @Published private(set) var status: String?
+    @Published private(set) var copyStatus: String?
     @Published var path: [VerificationSMSDestination] = []
     private let store = VerificationSMSStore()
     private let pairingStore = PairingStore()
@@ -19,6 +20,7 @@ final class VerificationSMSInboxModel: ObservableObject {
     private var pushToken: Data?
     private var refreshAgain = false
     private var syncTask: Task<Void, Never>?
+    private var autoCopy = VerificationSMSAutoCopy()
 
     func start(_ application: UIApplication) {
         loadLocal()
@@ -29,6 +31,15 @@ final class VerificationSMSInboxModel: ObservableObject {
     }
 
     func didRegister(token: Data) { pushToken = token; refresh() }
+
+    func setScenePhase(_ phase: ScenePhase) {
+        autoCopy.setActive(phase == .active)
+        if phase == .active {
+            loadLocal()
+            copyPendingNotification()
+            refresh()
+        } else { copyStatus = nil }
+    }
 
     func refresh() {
         guard syncTask == nil else { refreshAgain = true; return }
@@ -50,7 +61,10 @@ final class VerificationSMSInboxModel: ObservableObject {
     func receive(_ notification: VerificationSMSNotification, open: Bool) {
         guard let pairing = try? pairingStore.load(), pairing.pairingID == notification.key.pairingID else { return }
         loadLocal()
+        copyStatus = nil
+        autoCopy.receive(notification.key, opened: open)
         if open { path = [.inbox, .message(notification.key)] }
+        copyPendingNotification()
         refresh()
     }
 
@@ -60,9 +74,28 @@ final class VerificationSMSInboxModel: ObservableObject {
 
     func message(for key: VerificationSMSKey) -> VerificationSMS? { messages.first { $0.id == key } }
 
+    func copyManually(_ message: VerificationSMS) {
+        guard let code = message.code else { return }
+        autoCopy.copiedManually(message)
+        UIPasteboard.general.string = code
+        copyStatus = "已复制验证码"
+    }
+
+    private func copyPendingNotification() {
+        guard let pairing = try? pairingStore.load(),
+              let message = autoCopy.takeCopy(from: store, pairingID: pairing.pairingID),
+              let code = message.code else { return }
+        UIPasteboard.general.string = code
+        copyStatus = "已复制验证码"
+    }
+
     private func loadLocal() {
         guard !store.isLoaded else { return }
-        do { try store.load(); messages = store.messages }
+        do {
+            try store.load()
+            autoCopy.restoreBaseline(from: store)
+            messages = store.messages
+        }
         catch { status = "暂时无法读取已保存的短信，请解锁后重试。" }
     }
 
@@ -91,6 +124,7 @@ final class VerificationSMSInboxModel: ObservableObject {
                 hasMore = page.hasMore
                 // Importing another pairing does not erase records or apply its cursor to this one.
                 if (try pairingStore.load())?.pairingID != pairing.pairingID { return }
+                copyPendingNotification()
             } while hasMore
         } catch {
             status = "暂时无法更新短信，已保存的记录仍可查看。请稍后下拉刷新。"
@@ -121,7 +155,7 @@ struct VerificationSMSInboxView: View {
                             Text(message.body).lineLimit(2).font(.subheadline)
                         }
                     }
-                    if let code = message.code { VerificationSMSCopyButton(code: code) }
+                    if message.code != nil { VerificationSMSCopyButton { model.copyManually(message) } }
                 }
                 .padding(.vertical, 4)
                 .privacySensitive()
@@ -151,7 +185,7 @@ struct VerificationSMSDetailView: View {
                 Section("验证码") {
                     if let code = message.code {
                         Text(code).font(.title2.monospacedDigit()).textSelection(.enabled)
-                        VerificationSMSCopyButton(code: code)
+                        VerificationSMSCopyButton { model.copyManually(message) }
                     } else {
                         Text("未能确定唯一验证码，请查看短信内容。")
                             .foregroundStyle(.secondary)
@@ -169,12 +203,12 @@ struct VerificationSMSDetailView: View {
 }
 
 private struct VerificationSMSCopyButton: View {
-    let code: String
+    let copy: () -> Void
     @State private var copied = false
 
     var body: some View {
         Button(copied ? "已复制" : "复制验证码", systemImage: "doc.on.doc") {
-            UIPasteboard.general.string = code
+            copy()
             copied = true
         }
         .buttonStyle(.borderless)

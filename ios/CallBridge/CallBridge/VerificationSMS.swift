@@ -155,6 +155,61 @@ final class VerificationSMSStore {
     }
 }
 
+/// Only notification intents can copy. Historical sync merely makes persisted records available.
+/// Owned by the inbox's main actor; no asynchronous operation retains an older copy request.
+struct VerificationSMSAutoCopy {
+    private var active = false
+    private var restored = false
+    private var automaticSequences: [UUID: Int64] = [:]
+    private var deliveries = Set<VerificationSMSKey>()
+    private var openedNotification: VerificationSMSKey?
+
+    mutating func restoreBaseline(from store: VerificationSMSStore) {
+        guard !restored, store.isLoaded else { return }
+        for message in store.messages {
+            automaticSequences[message.pairingID] = max(automaticSequences[message.pairingID] ?? 0, message.seq)
+        }
+        restored = true
+    }
+
+    mutating func setActive(_ value: Bool) { active = value }
+
+    mutating func receive(_ key: VerificationSMSKey, opened: Bool) {
+        if opened {
+            // A user's selection supersedes pending automatic requests, including older network work.
+            deliveries.removeAll()
+            openedNotification = key
+        } else {
+            deliveries.insert(key)
+        }
+    }
+
+    mutating func takeCopy(from store: VerificationSMSStore, pairingID: UUID) -> VerificationSMS? {
+        guard active, restored, store.isLoaded else { return nil }
+        deliveries = Set(deliveries.filter { $0.pairingID == pairingID })
+        if let key = openedNotification {
+            guard key.pairingID == pairingID else { openedNotification = nil; return nil }
+            guard let message = store.messages.first(where: { $0.id == key }) else { return nil }
+            openedNotification = nil
+            automaticSequences[pairingID] = max(automaticSequences[pairingID] ?? 0, message.seq)
+            return message.code == nil ? nil : message
+        }
+        let available = store.messages.filter { deliveries.contains($0.id) }
+        guard let newest = available.max(by: { $0.seq < $1.seq }) else { return nil }
+        for message in available { deliveries.remove(message.id) }
+        guard newest.seq > (automaticSequences[pairingID] ?? 0) else { return nil }
+        // Even a newer ambiguous SMS must not cause an older pending code to be copied later.
+        automaticSequences[pairingID] = newest.seq
+        return newest.code == nil ? nil : newest
+    }
+
+    mutating func copiedManually(_ message: VerificationSMS) {
+        deliveries.removeAll()
+        openedNotification = nil
+        automaticSequences[message.pairingID] = max(automaticSequences[message.pairingID] ?? 0, message.seq)
+    }
+}
+
 struct VerificationSMSClient {
     let session: URLSession
     init(session: URLSession = .shared) { self.session = session }

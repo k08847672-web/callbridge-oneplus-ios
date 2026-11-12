@@ -60,10 +60,13 @@ struct CallBridgeApp: App {
     var body: some Scene {
         WindowGroup {
             BridgeView(model: model, inbox: inbox)
-                .onAppear { model.setScenePhase(scenePhase) }
+                .onAppear {
+                    model.setScenePhase(scenePhase)
+                    inbox.setScenePhase(scenePhase)
+                }
                 .onChange(of: scenePhase) { _, phase in
                     model.setScenePhase(phase)
-                    if phase == .active { inbox.refresh() }
+                    inbox.setScenePhase(phase)
                 }
         }
     }
@@ -160,6 +163,15 @@ private struct BridgeView: View {
             }
             .fileImporter(isPresented: $importingPairing, allowedContentTypes: [.data]) { result in
                 if case .success(let url) = result { model.importPairing(from: url) }
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            if let copyStatus = inbox.copyStatus {
+                Text(copyStatus)
+                    .font(.callout)
+                    .padding()
+                    .frame(maxWidth: .infinity)
+                    .background(.regularMaterial)
             }
         }
     }
