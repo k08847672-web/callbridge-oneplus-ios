@@ -14,11 +14,12 @@ def absolute_path(value):
 
 def render(jar_path, config_path, su_path, log_path):
     template = Path(__file__).with_name("callbridge-autostart.sh").read_text()
-    # Check the actual child identity before executing any bridge code. No new
-    # Android permission, SELinux rule, supplementary group or capability is added.
+    # Restore only the original ADB shell's inet group for the Android DNS proxy.
+    # Check the actual child identity before executing any bridge code.
     shell_command = "\n".join([
         '[ "$(/system/bin/id -u)" = 2000 ] || exit 1',
         '[ "$(/system/bin/id -g)" = 2000 ] || exit 1',
+        'case " $(/system/bin/id -G) " in *" 3003 "*) ;; *) exit 1 ;; esac',
         '[ "$(/system/bin/id -Z)" = u:r:shell:s0 ] || exit 1',
         'CALLBRIDGE_CAPS="$(/system/bin/sed -n \'s/^CapEff:[[:space:]]*//p\' /proc/self/status)"',
         'case "$CALLBRIDGE_CAPS" in ""|*[!0]*) exit 1 ;; esac',

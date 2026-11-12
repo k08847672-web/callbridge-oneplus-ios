@@ -63,5 +63,5 @@ CALLBRIDGE_SHELL_COMMAND=@@SHELL_COMMAND@@
     fi
     [ -f "$CALLBRIDGE_HOOK" ] || exit 0
     # Wait only to retain/clean the singleton lock. No restart loop on bridge exit.
-    "$CALLBRIDGE_SU" -d -Z u:r:shell:s0 2000 -c "$CALLBRIDGE_SHELL_COMMAND"
+    "$CALLBRIDGE_SU" -d -g 2000 -G 3003 -Z u:r:shell:s0 2000 -c "$CALLBRIDGE_SHELL_COMMAND"
 ) </dev/null >/dev/null 2>&1 &

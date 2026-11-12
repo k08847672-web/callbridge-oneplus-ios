@@ -36,6 +36,8 @@ if name == "id":
     shell = os.environ.get("CALLBRIDGE_TEST_IN_SHELL") == "1"
     if args == ["-Z"]:
         print("u:r:shell:s0" if shell else "u:r:magisk:s0")
+    elif args == ["-G"]:
+        print(current.get("shell_groups", "2000 3003") if shell else "0")
     else:
         print(current.get("shell_uid", 2000) if shell else 0)
 elif name == "getprop":
@@ -49,6 +51,7 @@ elif name == "ip":
     if current["network"]:
         print("9: tun0    inet 100.64.0.7/32 scope global tun0")
 elif name == "stat":
+    event("config_mode")
     print(format(stat.S_IMODE(os.stat(args[-1]).st_mode), "o"))
 elif name == "pidof":
     event("process_scan")
@@ -59,9 +62,9 @@ elif name == "pidof":
 elif name == "sleep":
     time.sleep(0.03)
 elif name == "su":
-    event("su", flags=args[:5])
+    event("su", flags=args[:-1])
     environment = dict(os.environ, CALLBRIDGE_TEST_IN_SHELL="1")
-    sys.exit(subprocess.call(["/bin/sh", "-c", args[5]], env=environment))
+    sys.exit(subprocess.call(["/bin/sh", "-c", args[-1]], env=environment))
 elif name == "app_process":
     event("bridge", argv=args, classpath=os.environ.get("CLASSPATH"),
           systemclasspath=os.environ.get("SYSTEMSERVERCLASSPATH"))
@@ -175,7 +178,7 @@ class AutostartTests(unittest.TestCase):
         self.save_state(network=True)
         self.until(lambda: self.events("bridge"))
         self.assertEqual(len(self.events("su")), 1)
-        self.assertEqual(self.events("su")[0]["flags"], ["-d", "-Z", "u:r:shell:s0", "2000", "-c"])
+        self.assertEqual(self.events("su")[0]["flags"], ["-d", "-g", "2000", "-G", "3003", "-Z", "u:r:shell:s0", "2000", "-c"])
         bridge = self.events("bridge")[0]
         self.assertEqual(bridge["classpath"], str(self.jar))
         self.assertEqual(bridge["argv"], ["/system/bin", "com.doitio.diagnostics.TelephonyNetworkBridge", str(self.config)])
@@ -216,12 +219,18 @@ class AutostartTests(unittest.TestCase):
         self.config.chmod(0o644)
         self.save_state(boot=True, network=True)
         self.launch()
-        time.sleep(0.2)
-        self.assertFalse(self.lock.exists())
+        self.until(lambda: self.events("config_mode") and not self.lock.exists())
         self.assertFalse(self.events("su"))
 
     def test_bridge_is_not_executed_if_su_does_not_drop_uid(self):
         self.save_state(boot=True, network=True, shell_uid=0)
+        self.launch()
+        self.until(lambda: self.events("su") and not self.lock.exists())
+        self.assertFalse(self.events("bridge"))
+        self.assertEqual(self.log.read_text(), "existing bridge log\n")
+
+    def test_bridge_is_not_executed_without_original_inet_group(self):
+        self.save_state(boot=True, network=True, shell_groups="2000")
         self.launch()
         self.until(lambda: self.events("su") and not self.lock.exists())
         self.assertFalse(self.events("bridge"))
