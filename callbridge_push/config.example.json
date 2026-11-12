@@ -3,6 +3,7 @@
   "port": 47632,
   "mode": "mock",
   "state_file": "/path/to/private-callbridge/provider-state.json",
+  "sms_state_file": "/path/to/private-callbridge/sms-state.json",
   "pairs": [
     {
       "pairing_id": "00000000-0000-4000-8000-000000000001",
@@ -13,6 +14,7 @@
     "team_id": "YOUR_APPLE_TEAM_ID",
     "key_id": "YOUR_APNS_KEY_ID",
     "topic": "your.unique.bundle.id.voip",
+    "alert_topic": "your.unique.bundle.id",
     "private_key_path": "/path/to/private-callbridge/AuthKey.p8"
   }
 }

@@ -4,6 +4,7 @@ import UIKit
 
 @MainActor
 final class BridgeModel: ObservableObject {
+    var onPairingSaved: (() -> Void)?
     @Published var endpoint = ""
     @Published var port = "47631"
     @Published var temporaryKey = ""
@@ -219,6 +220,7 @@ final class BridgeModel: ObservableObject {
     private func savePersistentPairing(_ pairing: StoredPairing) throws {
         try pairingStore.save(pairing)
         endpoint = pairing.endpoint; port = String(pairing.port); temporaryKey = pairing.keyHex
+        onPairingSaved?()
     }
 
     private func registerPushToken() {

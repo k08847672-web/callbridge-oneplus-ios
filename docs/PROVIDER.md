@@ -13,12 +13,14 @@ provider 主机和监听地址可以自行选择。iPhone 与 Android 必须能�
 | `listen` / `port` | provider 本机监听地址和端口 |
 | `mode` | `mock` 或 `apns` |
 | `state_file` | 私有注册/状态持久化文件路径，服务保存时使用 0600 权限 |
+| `sms_state_file` | 可选；独立短信收件箱 JSON，0600。默认 `${state_file}.sms.json`，不修改原通话状态结构 |
 | `pairs` | 允许注册与发布事件的配对项 |
 | `pairs[].pairing_id` | iPhone 和 Android 配置使用的同一个配对标识 |
 | `pairs[].provider_token_hash` | 独立 provider Bearer token 的 SHA-256 十六进制摘要 |
 | `apns.team_id` | 签名团队的 Apple Team ID |
 | `apns.key_id` | APNs token signing key 的 Key ID |
 | `apns.topic` | iOS App Bundle ID 加 `.voip` |
+| `apns.alert_topic` | 可选；普通通知使用的 iOS Bundle ID，默认从 `apns.topic` 去掉末尾 `.voip` |
 | `apns.private_key_path` | provider 主机上私有 `.p8` 文件的路径 |
 
 使用 [配对生成器](PAIRING.md) 一次生成两端配置和 `provider-pair.json`。把该 JSON 对象作为自己私有 provider 配置 `pairs` 数组的一项：它包含对应的 `pairing_id` 与 SHA-256 摘要，两端私有文件已经带入同一原 token。不要另生成不匹配的 token，也不要把原 token 放进启动参数、公开示例、日志或 shell 历史。
@@ -71,3 +73,21 @@ Android 通过 `/v1/calls` 发布 `ringing` / `ended`。provider 使用独立 Be
 provider 在发送前仅持久化原有通话状态和本次尝试标记，避免重复事件或进程重启导致重复推送；状态文件格式与配置无需为身份字段变更。迟到姓名由已认证直连更新，不补发 push。发送失败返回 `502 push_attempt_failed`；结果不确定的同一次推送不会自动重发。`ended` 只保存结束状态，不发送新的 VoIP push，迟到响铃不会覆盖已结束的同一个 Call。
 
 真实 APNs 接受请求只证明 provider 的发送步骤。iPhone 收到推送、CallKit 报告来电、JOIN 匹配、用户接听、两向声音以及挂断都需要单独观察。签名与 TestFlight 步骤见 [朋友签名](FRIEND_SIGNING_TESTFLIGHT.md)。
+
+## 验证码短信收件箱与普通通知
+
+短信使用相同配对的 Bearer token 鉴权，按 `pairing_id` 隔离，普通推送 token 与 VoIP token 分开保存。所有接口为 POST：
+
+| 路由 | 请求字段 | 响应字段 |
+| --- | --- | --- |
+| `/v1/sms/register` | `pairing_id,push_token,environment` | `accepted` |
+| `/v1/sms` | `pairing_id,message_id,received_at_ms,sender,body,code` | `accepted,duplicate,seq` |
+| `/v1/sms/sync` | `pairing_id,after_seq` | `messages,next_after_seq,has_more` |
+
+`message_id` 为发送端生成的确定性 SHA-256 小写十六进制字符串（64 位）；`received_at_ms` 是 Unix 毫秒整数，`sender` 与 `body` 是完整字符串，`code` 是数字串或 `null`。同配对内以 `message_id` 去重，首次持久化分配从 1 开始递增的 `seq`，重复投递返回原序号并保留原内容。另一配对的序号与消息完全独立。
+
+provider 在仓库外的独立 JSON 中原子保存短信和普通通知注册，文件权限为 0600，不改现有通话状态的 version、注册或 Call。保存成功后才尝试普通 APNs；没有普通 token 或通知失败仍返回 `accepted=true`，重复消息不再次通知。短信不会因通知失败、服务重启、配对文件期限或时间流逝而删除，也不设历史保留上限。
+
+iPhone 启动或回到前台时，以本地已保存的序号补拉。`messages` 中每条包含完整短信字段及 `seq`；每页最多 100 条。将响应的 `next_after_seq` 作为下一页 `after_seq`，在 `has_more=true` 时继续请求；分页不限制历史总量。没有新消息时返回空数组、原游标和 `has_more=false`。
+
+普通 APNs 复用现有 ES256 JWT 和私钥，使用 `apns-push-type=alert` 与不带额外 `.voip` 后缀的 Bundle ID。payload 仅为 `aps.alert`（标题“收到验证码短信”、正文“打开应用查看”）、`sound=default`、`kind=verification_sms`、`pairing_id` 和 `message_id`，不携带短信正文、发送方或验证码。日志仅记录规范化路由、HTTP 状态及 APNs 的既有脱敏结果，不输出正文、号码、验证码、token 或密钥。真实普通通知投递和 iPhone 收件箱显示仍需分发构建及设备验证。

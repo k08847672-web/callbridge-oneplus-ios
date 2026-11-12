@@ -1,18 +1,52 @@
 import SwiftUI
 import UniformTypeIdentifiers
 import UIKit
+import UserNotifications
 
 @MainActor
 private enum BridgeRuntime {
-    static let model = BridgeModel()
+    static let inbox = VerificationSMSInboxModel()
+    static let model: BridgeModel = {
+        let model = BridgeModel()
+        model.onPairingSaved = { inbox.refresh() }
+        return model
+    }()
 }
 
 @MainActor
-final class BridgeAppDelegate: NSObject, UIApplicationDelegate {
+final class BridgeAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         BridgeRuntime.model.startPushRegistration()
+        UNUserNotificationCenter.current().delegate = self
+        BridgeRuntime.inbox.start(application)
         return true
+    }
+
+    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        BridgeRuntime.inbox.didRegister(token: deviceToken)
+    }
+
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        let route = VerificationSMSNotification(payload: notification.request.content.userInfo)
+        Task { @MainActor in
+            guard let route, BridgeRuntime.inbox.accepts(route) else { completionHandler([]); return }
+            BridgeRuntime.inbox.receive(route, open: false)
+            completionHandler([.banner, .list, .sound])
+        }
+    }
+
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
+        let route = VerificationSMSNotification(payload: response.notification.request.content.userInfo)
+        Task { @MainActor in
+            if response.actionIdentifier == UNNotificationDefaultActionIdentifier, let route {
+                BridgeRuntime.inbox.receive(route, open: true)
+            }
+            completionHandler()
+        }
     }
 }
 
@@ -20,24 +54,32 @@ final class BridgeAppDelegate: NSObject, UIApplicationDelegate {
 struct CallBridgeApp: App {
     @UIApplicationDelegateAdaptor(BridgeAppDelegate.self) private var appDelegate
     @StateObject private var model = BridgeRuntime.model
+    @StateObject private var inbox = BridgeRuntime.inbox
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
-            BridgeView(model: model)
+            BridgeView(model: model, inbox: inbox)
                 .onAppear { model.setScenePhase(scenePhase) }
-                .onChange(of: scenePhase) { _, phase in model.setScenePhase(phase) }
+                .onChange(of: scenePhase) { _, phase in
+                    model.setScenePhase(phase)
+                    if phase == .active { inbox.refresh() }
+                }
         }
     }
 }
 
 private struct BridgeView: View {
     @ObservedObject var model: BridgeModel
+    @ObservedObject var inbox: VerificationSMSInboxModel
     @State private var importingPairing = false
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $inbox.path) {
             Form {
+                Section {
+                    NavigationLink("验证码收件箱", value: VerificationSMSDestination.inbox)
+                }
                 Section("通话桥实验") {
                     if model.simulatedTest {
                         Text("本次是本机模拟自检：不拨号、不接听真实电话，麦克风数据不发送到网络。")
@@ -110,6 +152,12 @@ private struct BridgeView: View {
                 }
             }
             .navigationTitle("一加通话桥 · 实验")
+            .navigationDestination(for: VerificationSMSDestination.self) { destination in
+                switch destination {
+                case .inbox: VerificationSMSInboxView(model: inbox)
+                case .message(let key): VerificationSMSDetailView(model: inbox, key: key)
+                }
+            }
             .fileImporter(isPresented: $importingPairing, allowedContentTypes: [.data]) { result in
                 if case .success(let url) = result { model.importPairing(from: url) }
             }

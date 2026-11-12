@@ -5,6 +5,7 @@ import { createHash, createPrivateKey, randomBytes, sign, timingSafeEqual } from
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { createSmsInbox, smsPayload, smsValid } from './sms.mjs';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const HASH = /^[0-9a-f]{64}$/;
@@ -50,7 +51,7 @@ export function tokenHash(token) {
 export async function loadConfig(filename) {
   const file = resolve(filename);
   const config = JSON.parse(await readFile(file, 'utf8'));
-  for (const field of ['state_file']) {
+  for (const field of ['state_file', 'sms_state_file']) {
     if (typeof config[field] === 'string' && !isAbsolute(config[field])) {
       config[field] = resolve(dirname(file), config[field]);
     }
@@ -96,7 +97,7 @@ function cachedApnsJWT(apns, now) {
   return token;
 }
 
-export function apnsRequest({ apns, registration, payload }, now = Date.now()) {
+export function apnsRequest({ apns, registration, payload, pushType = 'voip' }, now = Date.now()) {
   return {
     origin: registration.environment === 'sandbox'
       ? 'https://api.sandbox.push.apple.com'
@@ -105,11 +106,11 @@ export function apnsRequest({ apns, registration, payload }, now = Date.now()) {
       ':method': 'POST',
       ':path': `/3/device/${registration.push_token}`,
       authorization: `bearer ${cachedApnsJWT(apns, now)}`,
-      'apns-topic': apns.topic,
-      'apns-push-type': 'voip',
+      'apns-topic': pushType === 'alert' ? (apns.alert_topic ?? apns.topic.replace(/\.voip$/, '')) : apns.topic,
+      'apns-push-type': pushType,
       'apns-priority': '10',
       // Transport expiry only; it does not impose a lifetime on the Android Call.
-      'apns-expiration': '0',
+      ...(pushType === 'voip' ? { 'apns-expiration': '0' } : {}),
       'content-type': 'application/json',
     },
     body: JSON.stringify(payload),
@@ -238,29 +239,37 @@ async function prepareConfig(raw) {
     pairs.set(pair.pairing_id, Buffer.from(pair.provider_token_hash, 'hex'));
   }
   const apns = { ...raw.apns };
+  const smsStateFile = raw.sms_state_file ?? `${raw.state_file}.sms.json`;
+  if (typeof smsStateFile !== 'string' || !smsStateFile || resolve(smsStateFile) === resolve(raw.state_file)) {
+    throw new Error('SMS state must use a separate file');
+  }
   if (raw.mode === 'apns') {
     if (![apns.team_id, apns.key_id, apns.topic, apns.private_key_path].every((value) => typeof value === 'string' && value)
       || !apns.topic.endsWith('.voip')) throw new Error('Invalid APNs configuration');
+    apns.alert_topic ??= apns.topic.slice(0, -'.voip'.length);
+    if (typeof apns.alert_topic !== 'string' || !apns.alert_topic) throw new Error('Invalid APNs alert topic');
     apns.privateKey = createPrivateKey(await readFile(apns.private_key_path));
     if (apns.privateKey.asymmetricKeyType !== 'ec' || apns.privateKey.asymmetricKeyDetails?.namedCurve !== 'prime256v1') {
       throw new Error('APNs signing key must be P-256');
     }
   }
-  return { ...raw, pairs, apns };
+  return { ...raw, sms_state_file: smsStateFile, pairs, apns };
 }
 
 export async function createProvider(rawConfig, { pushSender } = {}) {
   const config = await prepareConfig(rawConfig);
   const stored = await readState(config.state_file);
+  const smsInbox = await createSmsInbox(config.sms_state_file);
   let registrations = new Map(stored.registrations.map((entry) => [entry.pairing_id, entry]));
   let calls = new Map(stored.calls.map((entry) => [callKey(entry), entry]));
   let queue = Promise.resolve();
   const sendPush = pushSender ?? (config.mode === 'apns' ? sendApnsPush : async () => {});
 
   const server = http.createServer(async (request, response) => {
-    const route = ['/v1/register', '/v1/calls'].includes(request.url) ? request.url : 'other';
+    const routes = ['/v1/register', '/v1/calls', '/v1/sms/register', '/v1/sms', '/v1/sms/sync'];
+    const route = routes.includes(request.url) ? request.url : 'other';
     response.once('finish', () => diagnostic('provider_request_result', { route, status: response.statusCode }));
-    if (!['/v1/register', '/v1/calls'].includes(request.url)) return reply(response, 404, { error: 'not_found' });
+    if (route === 'other') return reply(response, 404, { error: 'not_found' });
     if (request.method !== 'POST') return reply(response, 405, { error: 'method_not_allowed' });
     let body;
     try { body = await bodyJSON(request); } catch { return reply(response, 400, { error: 'invalid_json' }); }
@@ -268,6 +277,30 @@ export async function createProvider(rawConfig, { pushSender } = {}) {
     const bearer = /^Bearer ([^\s]+)$/.exec(request.headers.authorization ?? '');
     if (!expected || !bearer || !timingSafeEqual(expected, Buffer.from(tokenHash(bearer[1]), 'hex'))) {
       return reply(response, 401, { error: 'unauthorized' });
+    }
+    if (route.startsWith('/v1/sms')) {
+      try {
+        if (route === '/v1/sms/register') {
+          if (!registrationValid(body)) return reply(response, 400, { error: 'invalid_registration' });
+          await smsInbox.register(body);
+          return reply(response, 200, { accepted: true });
+        }
+        if (route === '/v1/sms/sync') {
+          if (!Number.isSafeInteger(body.after_seq) || body.after_seq < 0) {
+            return reply(response, 400, { error: 'invalid_cursor' });
+          }
+          return reply(response, 200, await smsInbox.sync(body.pairing_id, body.after_seq));
+        }
+        if (!smsValid(body)) return reply(response, 400, { error: 'invalid_sms' });
+        const saved = await smsInbox.save(body);
+        if (!saved.duplicate && saved.registration) {
+          try {
+            await sendPush({ apns: config.apns, registration: saved.registration,
+              payload: smsPayload(saved.message), pushType: 'alert' });
+          } catch { /* The inbox is durable; APNs failure must not undo acceptance. */ }
+        }
+        return reply(response, 200, { accepted: true, duplicate: saved.duplicate, seq: saved.message.seq });
+      } catch { return reply(response, 500, { error: 'sms_state_update_failed' }); }
     }
     const execute = async () => {
       if (request.url === '/v1/register') {
@@ -335,6 +368,7 @@ export async function createProvider(rawConfig, { pushSender } = {}) {
     },
     async close() {
       await queue;
+      await smsInbox.flush();
       if (!server.listening) return;
       server.closeIdleConnections();
       await new Promise((accept, reject) => server.close((error) => error ? reject(error) : accept()));

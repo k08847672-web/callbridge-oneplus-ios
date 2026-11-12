@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A00000000000000000000015 /* VerificationSMS.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000015 /* VerificationSMS.swift */; };
+		A00000000000000000000016 /* VerificationSMSInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000016 /* VerificationSMSInbox.swift */; };
 		A00000000000000000000009 /* SystemCallController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000009 /* SystemCallController.swift */; };
 		A00000000000000000000001 /* CallBridgeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000001 /* CallBridgeApp.swift */; };
 		A00000000000000000000002 /* BridgeModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000002 /* BridgeModel.swift */; };
@@ -21,6 +23,8 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		B00000000000000000000015 /* VerificationSMS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VerificationSMS.swift; sourceTree = "<group>"; };
+		B00000000000000000000016 /* VerificationSMSInbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VerificationSMSInbox.swift; sourceTree = "<group>"; };
 		B00000000000000000000009 /* SystemCallController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemCallController.swift; sourceTree = "<group>"; };
 		B00000000000000000000001 /* CallBridgeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallBridgeApp.swift; sourceTree = "<group>"; };
 		B00000000000000000000002 /* BridgeModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BridgeModel.swift; sourceTree = "<group>"; };
@@ -70,6 +74,8 @@
 				B00000000000000000000010 /* IncomingCallCoordinator.swift */,
 				B00000000000000000000011 /* PairingStore.swift */,
 				B00000000000000000000012 /* VoIPPushController.swift */,
+				B00000000000000000000015 /* VerificationSMS.swift */,
+				B00000000000000000000016 /* VerificationSMSInbox.swift */,
 				B00000000000000000000013 /* Assets.xcassets */,
 				B00000000000000000000014 /* CallBridge.entitlements */,
 			);
@@ -166,6 +172,8 @@
 				A00000000000000000000010 /* IncomingCallCoordinator.swift in Sources */,
 				A00000000000000000000011 /* PairingStore.swift in Sources */,
 				A00000000000000000000012 /* VoIPPushController.swift in Sources */,
+				A00000000000000000000015 /* VerificationSMS.swift in Sources */,
+				A00000000000000000000016 /* VerificationSMSInbox.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -201,6 +209,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CALLBRIDGE_APNS_ENVIRONMENT = sandbox;
+				CURRENT_PROJECT_VERSION = 4;
 				CALLBRIDGE_APS_ENTITLEMENT = development;
 				CODE_SIGN_STYLE = Automatic;
 				CODE_SIGN_ENTITLEMENTS = CallBridge/CallBridge.entitlements;
@@ -225,6 +234,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CALLBRIDGE_APNS_ENVIRONMENT = production;
+				CURRENT_PROJECT_VERSION = 4;
 				CALLBRIDGE_APS_ENTITLEMENT = production;
 				CODE_SIGN_STYLE = Automatic;
 				CODE_SIGN_ENTITLEMENTS = CallBridge/CallBridge.entitlements;
