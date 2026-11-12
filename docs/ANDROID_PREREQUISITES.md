@@ -18,7 +18,7 @@
 
 设备还必须支持 `Telecom.isRinging`、16 kHz PCM 的 `VOICE_DOWNLINK`、双向 `TYPE_TELEPHONY` 路由以及 native `incall_music` 输出 flag。这些能力依赖系统实现与既有授权，不能从 Android 版本或编译成功推断。
 
-此前环境的 Root 只用于获得所需既有特权；桥进程本身仍以 shell UID 运行。本仓库不提供解锁、刷机、Root 或自动提权步骤，也不新增开机启动或 Root daemon。
+此前环境的 Root 只用于获得所需既有特权；桥进程本身仍以 shell UID 运行。本仓库不提供解锁、刷机、Root 或自动提权步骤。已有 Magisk 的 PJZ110 可使用下方独立开机启动模板；桥不会以 Root 身份运行。
 
 ## helper
 
@@ -42,3 +42,24 @@ JAR 和配置路径应替换为自己设备上的明确路径。配置文件由 
 一次通话正常结束后，进程继续等待下一通；持久配对可以复用，每通生成新的 session。进程需要由使用者明确配置并启动，本仓库不自动部署或安装后台服务。
 
 iPhone 签名或 TestFlight 安装完成后，还要配置并启动 Android 桥、helper 及所选 provider。真实 Telecom 绑定、蜂窝双向音频、锁屏新来电、断线恢复与挂断均需在自己的设备上验收；本地 fixture 或 APK 构建不证明这些条件已满足。
+
+## Magisk 开机启动
+
+`scripts/device/callbridge-autostart.sh` 是模板。先核验现有生产进程实际使用的 JAR、配置路径和哈希，以及本机 Magisk `su` 支持 `-d -Z u:r:shell:s0 2000 -c`。只把路径传给本地 renderer，不将实际设备配对、地址或私有配置写入源码：
+
+```sh
+python3 scripts/device/render-callbridge-autostart.py \
+  --jar-path /explicit/device/path/bridge.jar \
+  --config-path /explicit/device/path/private600.properties \
+  --su-path /explicit/device/path/su \
+  --log-path /explicit/device/path/bridge.log \
+  --output /absolute/private/callbridge-autostart.sh
+```
+
+renderer 不读取配对文件、不访问手机，输出权限为 `0700`。核验设备、产物哈希和现有运行身份后，只将渲染结果安装为设备端 `/data/adb/service.d/callbridge-autostart.sh`，owner `0:0`、mode `0755`；保留原 JAR、配置及其权限，不改其他开机项。安装前后都核对只有同一份生产桥；可手动调用这个已安装的 hook 验证它不会重复启动。
+
+hook 等待 `sys.boot_completed=1` 和原配置的 `bindAddress` 在本机接口上 UP，不主动启动、重配或重连 Tailscale。Magisk 只负责进入原 shell UID/GID 2000、SELinux shell 域并丢弃 capabilities；执行桥前再次核验这些身份。未继承 `SYSTEMSERVERCLASSPATH` 时，只从 Android 生成的 classpath 文件提取该变量。`--log-path` 指向原生产进程使用的日志；只有降到 shell 身份并通过身份核验后，才在执行桥时将 stdout/stderr 追加该文件，Root 不打开生产日志。配置不会作为 shell 代码执行，也不输出密钥、号码或音频。
+
+原子锁位于 `/dev/.callbridge-autostart.lock`，重启自然清除；精确 argv 与 CLASSPATH 检查保留已运行的生产桥。桥退出后不自动重拉，不改变正常通话时长、配对期限、helper 权限或原有接听行为。回滚只移除这个新增 hook：尚在等待启动条件的脚本随即退出，已运行的生产桥保持原样，下一次重启不再自动启动。
+
+定向本地检查为 `python3 scripts/diagnostics/tests/callbridge_autostart_test.py`，使用桩系统命令，不访问设备。安装后需正常重启一次，核验无需手动启动即可恢复同一 JAR 的单一生产监听、UID/GID 2000、shell 域和 CapEff 为零；这只验收开机启动，不代替真实通话验收。
